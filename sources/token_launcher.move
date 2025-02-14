@@ -1,11 +1,6 @@
 module wagmint::token_launcher;
 
-use std::string::String;
 use sui::event;
-use sui::object::{Self, UID};
-use sui::transfer;
-use sui::tx_context::{Self, TxContext};
-use sui::url::{Self, Url};
 
 // const TRANSACTION_FEE: u64 = 100;
 // const INITIAL_FEE: u64 = 10;
