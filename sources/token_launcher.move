@@ -1,0 +1,68 @@
+module wagmint::token_launcher;
+
+use std::string::String;
+use sui::event;
+use sui::object::{Self, UID};
+use sui::transfer;
+use sui::tx_context::{Self, TxContext};
+use sui::url::{Self, Url};
+
+// const TRANSACTION_FEE: u64 = 100;
+// const INITIAL_FEE: u64 = 10;
+
+public struct Launchpad has key, store {
+    id: UID,
+    admin: address,
+    launched_coins_count: u64,
+}
+
+public struct LaunchedCoinsRegistry has key {
+    id: UID,
+    coins: vector<address>,
+}
+
+public struct LaunchpadInitialized has copy, drop {
+    admin: address,
+}
+
+const E_NOT_ADMIN: u64 = 0;
+
+fun init(ctx: &mut TxContext) {
+    let launchpad = Launchpad {
+        id: object::new(ctx),
+        admin: tx_context::sender(ctx),
+        launched_coins_count: 0,
+    };
+
+    let registry = LaunchedCoinsRegistry {
+        id: object::new(ctx),
+        coins: vector::empty(),
+    };
+
+    // Emit an event when launchpad is initialized
+    event::emit(LaunchpadInitialized {
+        admin: tx_context::sender(ctx),
+    });
+
+    transfer::transfer(launchpad, tx_context::sender(ctx));
+    transfer::share_object(registry);
+}
+
+public entry fun update_and_transfer_launchpad(
+    mut lp: Launchpad, // passed by value so we own it
+    new_admin: address,
+    ctx: &mut TxContext,
+) {
+    assert!(lp.admin == tx_context::sender(ctx), E_NOT_ADMIN);
+    lp.admin = new_admin;
+    transfer::transfer(lp, new_admin);
+}
+
+// === View Functions ===
+public fun launched_coins_count(launchpad: &Launchpad): u64 {
+    launchpad.launched_coins_count
+}
+
+public fun get_launched_coins(registry: &LaunchedCoinsRegistry): vector<address> {
+    *&registry.coins
+}
