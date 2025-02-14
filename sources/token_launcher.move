@@ -48,14 +48,17 @@ fun init(ctx: &mut TxContext) {
     transfer::share_object(registry);
 }
 
-public entry fun update_and_transfer_launchpad(
-    mut lp: Launchpad, // passed by value so we own it
+public entry fun update__launchpad_admin(
+    lp: &mut Launchpad, // passed by value so we own it
     new_admin: address,
     ctx: &mut TxContext,
 ) {
     assert!(lp.admin == tx_context::sender(ctx), E_NOT_ADMIN);
     lp.admin = new_admin;
-    transfer::transfer(lp, new_admin);
+}
+
+public fun add_to_registry(registry: &mut LaunchedCoinsRegistry, coin_address: address) {
+    vector::push_back(&mut registry.coins, coin_address);
 }
 
 // === View Functions ===
