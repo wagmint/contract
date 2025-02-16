@@ -97,14 +97,6 @@ public fun create_coin(
 }
 
 // === Buy functionality ===
-public fun get_purchase_price(coin_info: &CoinInfo, amount: u64): u64 {
-    bonding_curve::calculate_purchase_cost(coin_info.supply, amount)
-}
-
-public fun get_sale_return(coin_info: &CoinInfo, amount: u64): u64 {
-    bonding_curve::calculate_sale_return(coin_info.supply, amount)
-}
-
 public entry fun buy_tokens(
     coin_info: &mut CoinInfo,
     payment: &mut Coin<SUI>,
@@ -160,4 +152,39 @@ public fun get_coin_info(info: &CoinInfo): (String, String, Url, address, u64, u
         info.supply,
         balance::value(&info.reserve_balance),
     )
+}
+
+// Get current spot price of the coin
+public fun get_current_price(coin_info: &CoinInfo): u64 {
+    bonding_curve::calculate_price(coin_info.supply)
+}
+
+// Get cost to buy specific amount
+public fun get_purchase_cost(coin_info: &CoinInfo, amount: u64): u64 {
+    bonding_curve::calculate_purchase_cost(coin_info.supply, amount)
+}
+
+// Get return amount for selling specific amount
+public fun get_sale_return(coin_info: &CoinInfo, amount: u64): u64 {
+    bonding_curve::calculate_sale_return(coin_info.supply, amount)
+}
+
+// Get just the supply
+public fun get_supply(info: &CoinInfo): u64 {
+    info.supply
+}
+
+// Get just the reserve balance
+public fun get_reserve(info: &CoinInfo): u64 {
+    balance::value(&info.reserve_balance)
+}
+
+// Get creator address
+public fun get_creator(info: &CoinInfo): address {
+    info.creator
+}
+
+// Get launch time
+public fun get_launch_time(info: &CoinInfo): u64 {
+    info.launch_time
 }
