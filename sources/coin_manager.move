@@ -1,8 +1,10 @@
 module wagmint::coin_manager;
 
 use std::string::{String, as_bytes};
-use sui::coin::{Self, TreasuryCap};
+use sui::balance::{Self, Balance};
+use sui::coin::{Self, Coin, TreasuryCap};
 use sui::event;
+use sui::sui::SUI;
 use sui::url::{Self, Url};
 use wagmint::bonding_curve;
 use wagmint::token_launcher::{Self, LaunchedCoinsRegistry};
@@ -10,6 +12,7 @@ use wagmint::token_launcher::{Self, LaunchedCoinsRegistry};
 // Error codes
 const E_INVALID_NAME_LENGTH: u64 = 0;
 const E_INVALID_SYMBOL_LENGTH: u64 = 1;
+const E_INSUFFICIENT_PAYMENT: u64 = 2;
 
 public struct COIN has drop {}
 
@@ -23,7 +26,7 @@ public struct CoinInfo has key, store {
     launch_time: u64,
     treasury_cap: TreasuryCap<COIN>, // We'll need to make this generic
     supply: u64, // Track supply for bonding curve
-    reserve: u64, // Track SUI reserve for bonding curve
+    reserve_balance: Balance<SUI>, // Track reserve balance
 }
 
 // Event emitted when new coin is created
@@ -77,7 +80,7 @@ public fun create_coin(
         launch_time: tx_context::epoch(ctx),
         treasury_cap,
         supply: 0,
-        reserve: 0,
+        reserve_balance: balance::zero(), // Initialize empty balance
     };
 
     // Emit creation event
@@ -102,7 +105,59 @@ public fun get_sale_return(coin_info: &CoinInfo, amount: u64): u64 {
     bonding_curve::calculate_sale_return(coin_info.supply, amount)
 }
 
+public entry fun buy_tokens(
+    coin_info: &mut CoinInfo,
+    payment: &mut Coin<SUI>,
+    amount: u64,
+    ctx: &mut TxContext,
+) {
+    // Calculate cost in SUI
+    let cost = bonding_curve::calculate_purchase_cost(coin_info.supply, amount);
+
+    // Extract payment
+    let paid = coin::split(payment, cost, ctx);
+    let paid_balance = coin::into_balance(paid);
+    balance::join(&mut coin_info.reserve_balance, paid_balance);
+
+    // Mint new tokens
+    let treasury_cap = &mut coin_info.treasury_cap;
+    coin::mint_and_transfer(treasury_cap, amount, tx_context::sender(ctx), ctx);
+
+    // Update supply
+    coin_info.supply = coin_info.supply + amount;
+}
+
+// === Sell functionality ===
+public entry fun sell_tokens(coin_info: &mut CoinInfo, tokens: Coin<COIN>, ctx: &mut TxContext) {
+    let amount = coin::value(&tokens);
+
+    // Calculate return amount
+    let return_amount = bonding_curve::calculate_sale_return(coin_info.supply, amount);
+    assert!(return_amount <= balance::value(&coin_info.reserve_balance), E_INSUFFICIENT_PAYMENT);
+
+    // Burn the tokens
+    let treasury_cap = &mut coin_info.treasury_cap;
+    coin::burn(treasury_cap, tokens);
+
+    // Update supply
+    coin_info.supply = coin_info.supply - amount;
+
+    // Take SUI from reserve and send to seller
+    let return_coin = coin::from_balance(
+        balance::split(&mut coin_info.reserve_balance, return_amount),
+        ctx,
+    );
+    transfer::public_transfer(return_coin, tx_context::sender(ctx)); // Changed to public_transfer
+}
+
 // View functions
 public fun get_coin_info(info: &CoinInfo): (String, String, Url, address, u64, u64) {
-    (info.name, info.symbol, info.image_url, info.creator, info.supply, info.reserve)
+    (
+        info.name,
+        info.symbol,
+        info.image_url,
+        info.creator,
+        info.supply,
+        balance::value(&info.reserve_balance),
+    )
 }
