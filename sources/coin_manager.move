@@ -29,12 +29,31 @@ public struct CoinInfo has key, store {
     reserve_balance: Balance<SUI>, // Track reserve balance
 }
 
-// Event emitted when new coin is created
+// Events
 public struct CoinCreated has copy, drop {
     name: String,
     symbol: String,
     creator: address,
     coin_address: address,
+    launch_time: u64,
+}
+
+public struct TokensPurchased has copy, drop {
+    coin_address: address,
+    buyer: address,
+    amount: u64,
+    cost: u64,
+    new_supply: u64,
+    new_price: u64,
+}
+
+public struct TokensSold has copy, drop {
+    coin_address: address,
+    seller: address,
+    amount: u64,
+    return_amount: u64,
+    new_supply: u64,
+    new_price: u64,
 }
 
 // First we need function to create a new coin type
@@ -89,6 +108,7 @@ public fun create_coin(
         symbol,
         creator: tx_context::sender(ctx),
         coin_address: object::uid_to_address(&coin_info.id),
+        launch_time: tx_context::epoch(ctx),
     });
 
     token_launcher::increment_coins_count(launchpad);
@@ -117,6 +137,15 @@ public entry fun buy_tokens(
 
     // Update supply
     coin_info.supply = coin_info.supply + amount;
+
+    event::emit(TokensPurchased {
+        coin_address: object::uid_to_address(&coin_info.id),
+        buyer: tx_context::sender(ctx),
+        amount,
+        cost,
+        new_supply: coin_info.supply,
+        new_price: bonding_curve::calculate_price(coin_info.supply),
+    });
 }
 
 // === Sell functionality ===
@@ -140,6 +169,15 @@ public entry fun sell_tokens(coin_info: &mut CoinInfo, tokens: Coin<COIN>, ctx: 
         ctx,
     );
     transfer::public_transfer(return_coin, tx_context::sender(ctx)); // Changed to public_transfer
+
+    event::emit(TokensSold {
+        coin_address: object::uid_to_address(&coin_info.id),
+        seller: tx_context::sender(ctx),
+        amount,
+        return_amount,
+        new_supply: coin_info.supply,
+        new_price: bonding_curve::calculate_price(coin_info.supply),
+    });
 }
 
 // View functions
