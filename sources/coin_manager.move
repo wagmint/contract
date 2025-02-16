@@ -1,18 +1,15 @@
 module wagmint::coin_manager;
 
-use std::string::{Self, String, as_bytes};
-use sui::coin::{Self, Coin, TreasuryCap, CoinMetadata};
+use std::string::{String, as_bytes};
+use sui::coin::{Self, TreasuryCap};
 use sui::event;
-use sui::object::{Self, UID};
-use sui::transfer;
-use sui::tx_context::{Self, TxContext};
 use sui::url::{Self, Url};
+use wagmint::bonding_curve;
 use wagmint::token_launcher::{Self, LaunchedCoinsRegistry};
 
 // Error codes
-const E_NOT_COIN_CREATOR: u64 = 0;
-const E_INVALID_NAME_LENGTH: u64 = 1;
-const E_INVALID_SYMBOL_LENGTH: u64 = 2;
+const E_INVALID_NAME_LENGTH: u64 = 0;
+const E_INVALID_SYMBOL_LENGTH: u64 = 1;
 
 public struct COIN has drop {}
 
@@ -25,7 +22,8 @@ public struct CoinInfo has key, store {
     creator: address,
     launch_time: u64,
     treasury_cap: TreasuryCap<COIN>, // We'll need to make this generic
-    current_supply: u64,
+    supply: u64, // Track supply for bonding curve
+    reserve: u64, // Track SUI reserve for bonding curve
 }
 
 // Event emitted when new coin is created
@@ -78,7 +76,8 @@ public fun create_coin(
         creator: tx_context::sender(ctx),
         launch_time: tx_context::epoch(ctx),
         treasury_cap,
-        current_supply: 0,
+        supply: 0,
+        reserve: 0,
     };
 
     // Emit creation event
@@ -89,11 +88,21 @@ public fun create_coin(
         coin_address: object::uid_to_address(&coin_info.id),
     });
 
+    token_launcher::increment_coins_count(launchpad);
     token_launcher::add_to_registry(registry, object::uid_to_address(&coin_info.id));
     coin_info
 }
 
+// === Buy functionality ===
+public fun get_purchase_price(coin_info: &CoinInfo, amount: u64): u64 {
+    bonding_curve::calculate_purchase_cost(coin_info.supply, amount)
+}
+
+public fun get_sale_return(coin_info: &CoinInfo, amount: u64): u64 {
+    bonding_curve::calculate_sale_return(coin_info.supply, amount)
+}
+
 // View functions
-public fun get_coin_info(info: &CoinInfo): (String, String, Url, address, u64) {
-    (info.name, info.symbol, info.image_url, info.creator, info.current_supply)
+public fun get_coin_info(info: &CoinInfo): (String, String, Url, address, u64, u64) {
+    (info.name, info.symbol, info.image_url, info.creator, info.supply, info.reserve)
 }

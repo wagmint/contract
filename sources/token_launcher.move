@@ -52,6 +52,10 @@ public entry fun update__launchpad_admin(
     lp.admin = new_admin;
 }
 
+public fun increment_coins_count(launchpad: &mut Launchpad) {
+    launchpad.launched_coins_count = launchpad.launched_coins_count + 1;
+}
+
 public fun add_to_registry(registry: &mut LaunchedCoinsRegistry, coin_address: address) {
     vector::push_back(&mut registry.coins, coin_address);
 }
