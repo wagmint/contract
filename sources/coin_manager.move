@@ -1,6 +1,6 @@
 module wagmint::coin_manager;
 
-use std::string::{String, as_bytes};
+use std::string::{Self, String, as_bytes};
 use sui::balance::{Self, Balance};
 use sui::coin::{Self, Coin, TreasuryCap};
 use sui::event;
@@ -13,6 +13,13 @@ use wagmint::token_launcher::{Self, LaunchedCoinsRegistry};
 const E_INVALID_NAME_LENGTH: u64 = 0;
 const E_INVALID_SYMBOL_LENGTH: u64 = 1;
 const E_INSUFFICIENT_PAYMENT: u64 = 2;
+const E_INSUFFICIENT_BALANCE: u64 = 3;
+const E_AMOUNT_TOO_SMALL: u64 = 4;
+
+// Constants for validation
+const MAX_NAME_LENGTH: u64 = 32;
+const MAX_SYMBOL_LENGTH: u64 = 10;
+const MIN_TRADE_AMOUNT: u64 = 1;
 
 // Constants
 const MIN_CREATION_FEE: u64 = 1_000_000_000; // 1 SUI = 1_000_000_000
@@ -74,13 +81,17 @@ public fun create_coin(
 ): CoinInfo {
     // Validate inputs
     assert!(
-        std::string::length(&name) > 0 && std::string::length(&name) <= 32,
+        std::string::length(&name) > 0 && std::string::length(&name) <= MAX_NAME_LENGTH,
         E_INVALID_NAME_LENGTH,
     );
     assert!(
-        std::string::length(&symbol) > 0 && std::string::length(&symbol) <= 10,
+        std::string::length(&symbol) > 0 && std::string::length(&symbol) <= MAX_SYMBOL_LENGTH,
         E_INVALID_SYMBOL_LENGTH,
     );
+
+    // Validate payment
+    let payment_amount = coin::value(payment);
+    assert!(payment_amount >= MIN_CREATION_FEE, E_INSUFFICIENT_PAYMENT);
 
     // Take creation fee
     let payment_amount = coin::value(payment);
@@ -143,10 +154,16 @@ public entry fun buy_tokens(
     amount: u64,
     ctx: &mut TxContext,
 ) {
+    // Validate amount
+    assert!(amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
+
     // Calculate base cost and fee
     let base_cost = bonding_curve::calculate_purchase_cost(coin_info.supply, amount);
     let fee = calculate_transaction_fee(base_cost);
     let total_cost = base_cost + fee;
+
+    // Validate payment
+    assert!(coin::value(payment) >= total_cost, E_INSUFFICIENT_PAYMENT);
 
     // Process payment
     let paid = coin::split(payment, total_cost, ctx);
@@ -201,7 +218,8 @@ public entry fun sell_tokens(
     let fee = calculate_transaction_fee(return_amount);
     let final_return_amount = return_amount - fee;
 
-    assert!(return_amount <= balance::value(&coin_info.reserve_balance), E_INSUFFICIENT_PAYMENT);
+    // Validate reserve has enough balance
+    assert!(balance::value(&coin_info.reserve_balance) >= return_amount, E_INSUFFICIENT_BALANCE);
 
     // Burn the tokens
     let treasury_cap = &mut coin_info.treasury_cap;
