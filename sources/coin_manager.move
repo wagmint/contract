@@ -1,6 +1,6 @@
 module wagmint::coin_manager;
 
-use std::string::{Self, String, as_bytes};
+use std::string::{String, as_bytes};
 use sui::balance::{Self, Balance};
 use sui::coin::{Self, Coin, TreasuryCap};
 use sui::event;

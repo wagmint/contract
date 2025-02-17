@@ -40,7 +40,7 @@ fun init(ctx: &mut TxContext) {
     transfer::share_object(registry);
 }
 
-public entry fun update__launchpad_admin(
+public entry fun update_launchpad_admin(
     lp: &mut Launchpad, // passed by value so we own it
     new_admin: address,
     ctx: &mut TxContext,
@@ -68,4 +68,10 @@ public fun get_launched_coins(registry: &LaunchedCoinsRegistry): vector<address>
 
 public fun get_admin(launchpad: &Launchpad): address {
     launchpad.admin
+}
+
+// Add test helper function
+#[test_only]
+public(package) fun create_launchpad_for_testing(ctx: &mut TxContext) {
+    init(ctx)
 }
