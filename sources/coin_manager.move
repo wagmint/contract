@@ -14,6 +14,11 @@ const E_INVALID_NAME_LENGTH: u64 = 0;
 const E_INVALID_SYMBOL_LENGTH: u64 = 1;
 const E_INSUFFICIENT_PAYMENT: u64 = 2;
 
+// Constants
+const MIN_CREATION_FEE: u64 = 1_000_000_000; // 1 SUI = 1_000_000_000
+const TRANSACTION_FEE_BPS: u64 = 100; // 1% = 100 basis points
+const BPS_DENOMINATOR: u64 = 10000;
+
 public struct COIN has drop {}
 
 // This represents our custom coin properties
@@ -60,6 +65,7 @@ public struct TokensSold has copy, drop {
 public fun create_coin(
     launchpad: &mut token_launcher::Launchpad,
     registry: &mut LaunchedCoinsRegistry,
+    payment: &mut Coin<SUI>, // Added payment parameter
     name: String,
     symbol: String,
     description: String,
@@ -76,6 +82,14 @@ public fun create_coin(
         E_INVALID_SYMBOL_LENGTH,
     );
 
+    // Take creation fee
+    let payment_amount = coin::value(payment);
+    assert!(payment_amount >= MIN_CREATION_FEE, E_INSUFFICIENT_PAYMENT);
+
+    let fee = coin::split(payment, payment_amount, ctx);
+    transfer::public_transfer(fee, token_launcher::get_admin(launchpad));
+
+    // Create coin object
     let witness = COIN {};
 
     // Create the coin with treasury cap
@@ -116,13 +130,38 @@ public fun create_coin(
     coin_info
 }
 
+// Calculate transaction fee
+fun calculate_transaction_fee(amount: u64): u64 {
+    (amount * TRANSACTION_FEE_BPS) / BPS_DENOMINATOR
+}
+
 // === Buy functionality ===
 public entry fun buy_tokens(
+    launchpad: &token_launcher::Launchpad,
     coin_info: &mut CoinInfo,
     payment: &mut Coin<SUI>,
     amount: u64,
     ctx: &mut TxContext,
 ) {
+    // Calculate base cost and fee
+    let base_cost = bonding_curve::calculate_purchase_cost(coin_info.supply, amount);
+    let fee = calculate_transaction_fee(base_cost);
+    let total_cost = base_cost + fee;
+
+    // Process payment
+    let paid = coin::split(payment, total_cost, ctx);
+    let mut paid_balance = coin::into_balance(paid);
+
+    // Split and transfer fee
+    let fee_payment = balance::split(&mut paid_balance, fee);
+    transfer::public_transfer(
+        coin::from_balance(fee_payment, ctx),
+        token_launcher::get_admin(launchpad),
+    );
+
+    // Add remaining to reserve
+    balance::join(&mut coin_info.reserve_balance, paid_balance);
+
     // Calculate cost in SUI
     let cost = bonding_curve::calculate_purchase_cost(coin_info.supply, amount);
 
@@ -149,11 +188,19 @@ public entry fun buy_tokens(
 }
 
 // === Sell functionality ===
-public entry fun sell_tokens(coin_info: &mut CoinInfo, tokens: Coin<COIN>, ctx: &mut TxContext) {
+public entry fun sell_tokens(
+    launchpad: &token_launcher::Launchpad,
+    coin_info: &mut CoinInfo,
+    tokens: Coin<COIN>,
+    ctx: &mut TxContext,
+) {
     let amount = coin::value(&tokens);
 
-    // Calculate return amount
+    // Calculate return amount and fee
     let return_amount = bonding_curve::calculate_sale_return(coin_info.supply, amount);
+    let fee = calculate_transaction_fee(return_amount);
+    let final_return_amount = return_amount - fee;
+
     assert!(return_amount <= balance::value(&coin_info.reserve_balance), E_INSUFFICIENT_PAYMENT);
 
     // Burn the tokens
@@ -163,12 +210,21 @@ public entry fun sell_tokens(coin_info: &mut CoinInfo, tokens: Coin<COIN>, ctx: 
     // Update supply
     coin_info.supply = coin_info.supply - amount;
 
-    // Take SUI from reserve and send to seller
-    let return_coin = coin::from_balance(
-        balance::split(&mut coin_info.reserve_balance, return_amount),
-        ctx,
+    // Take fee and return amount from reserve
+    let fee_payment = balance::split(&mut coin_info.reserve_balance, fee);
+    let return_payment = balance::split(&mut coin_info.reserve_balance, final_return_amount);
+
+    // Transfer fee to admin
+    transfer::public_transfer(
+        coin::from_balance(fee_payment, ctx),
+        token_launcher::get_admin(launchpad),
     );
-    transfer::public_transfer(return_coin, tx_context::sender(ctx)); // Changed to public_transfer
+
+    // Send remaining amount to seller
+    transfer::public_transfer(
+        coin::from_balance(return_payment, ctx),
+        tx_context::sender(ctx),
+    );
 
     event::emit(TokensSold {
         coin_address: object::uid_to_address(&coin_info.id),

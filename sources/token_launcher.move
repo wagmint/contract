@@ -2,9 +2,6 @@ module wagmint::token_launcher;
 
 use sui::event;
 
-// const TRANSACTION_FEE: u64 = 100;
-// const INITIAL_FEE: u64 = 10;
-
 public struct Launchpad has key, store {
     id: UID,
     admin: address,
@@ -39,7 +36,7 @@ fun init(ctx: &mut TxContext) {
         admin: tx_context::sender(ctx),
     });
 
-    transfer::transfer(launchpad, tx_context::sender(ctx));
+    transfer::share_object(launchpad);
     transfer::share_object(registry);
 }
 
@@ -67,4 +64,8 @@ public fun launched_coins_count(launchpad: &Launchpad): u64 {
 
 public fun get_launched_coins(registry: &LaunchedCoinsRegistry): vector<address> {
     *&registry.coins
+}
+
+public fun get_admin(launchpad: &Launchpad): address {
+    launchpad.admin
 }
