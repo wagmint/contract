@@ -1,6 +1,7 @@
 module wagmint::coin_manager;
 
 use std::string::{String, as_bytes};
+use std::u64;
 use sui::balance::{Self, Balance};
 use sui::coin::{Self, Coin, TreasuryCap};
 use sui::event;
@@ -26,17 +27,15 @@ const MIN_CREATION_FEE: u64 = 1_000_000_000; // 1 SUI = 1_000_000_000
 const TRANSACTION_FEE_BPS: u64 = 100; // 1% = 100 basis points
 const BPS_DENOMINATOR: u64 = 10000;
 
-public struct COIN has drop {}
-
 // This represents our custom coin properties
-public struct CoinInfo has key, store {
+public struct CoinInfo<phantom T> has key, store {
     id: UID,
     name: String,
     symbol: String,
     image_url: Url,
     creator: address,
     launch_time: u64,
-    treasury_cap: TreasuryCap<COIN>, // We'll need to make this generic
+    treasury_cap: TreasuryCap<T>, // We'll need to make this generic
     supply: u64, // Track supply for bonding curve
     reserve_balance: Balance<SUI>, // Track reserve balance
 }
@@ -69,7 +68,9 @@ public struct TokensSold has copy, drop {
 }
 
 // First we need function to create a new coin type
-public fun create_coin(
+#[allow(lint(share_owned))]
+public fun create_coin<T: drop>(
+    witness: T, // Witness from caller
     launchpad: &mut token_launcher::Launchpad,
     registry: &mut LaunchedCoinsRegistry,
     payment: &mut Coin<SUI>, // Added payment parameter
@@ -77,8 +78,9 @@ public fun create_coin(
     symbol: String,
     description: String,
     image_url: vector<u8>,
+    mut custom_fee: Option<u64>,
     ctx: &mut TxContext,
-): CoinInfo {
+): address {
     // Validate inputs
     assert!(
         std::string::length(&name) > 0 && std::string::length(&name) <= MAX_NAME_LENGTH,
@@ -89,23 +91,25 @@ public fun create_coin(
         E_INVALID_SYMBOL_LENGTH,
     );
 
+    // Determine fee - use custom fee if provided and >= MIN_CREATION_FEE
+    let fee_amount = if (option::is_some(&custom_fee)) {
+        let custom_amount = option::extract(&mut custom_fee);
+        u64::max(custom_amount, MIN_CREATION_FEE)
+    } else {
+        MIN_CREATION_FEE
+    };
+
     // Validate payment
     let payment_amount = coin::value(payment);
-    assert!(payment_amount >= MIN_CREATION_FEE, E_INSUFFICIENT_PAYMENT);
+    assert!(payment_amount >= fee_amount, E_INSUFFICIENT_PAYMENT);
 
-    // Take creation fee
-    let payment_amount = coin::value(payment);
-    assert!(payment_amount >= MIN_CREATION_FEE, E_INSUFFICIENT_PAYMENT);
-
-    let fee = coin::split(payment, payment_amount, ctx);
+    // Take the determined fee
+    let fee = coin::split(payment, fee_amount, ctx);
     transfer::public_transfer(fee, token_launcher::get_admin(launchpad));
-
-    // Create coin object
-    let witness = COIN {};
 
     // Create the coin with treasury cap
     let (treasury_cap, metadata) = coin::create_currency(
-        witness, // We'll need to handle this
+        witness,
         9, // decimals
         *as_bytes(&symbol),
         *as_bytes(&name),
@@ -115,7 +119,7 @@ public fun create_coin(
     );
     transfer::public_share_object(metadata);
 
-    let coin_info = CoinInfo {
+    let coin_info = CoinInfo<T> {
         id: object::new(ctx),
         name,
         symbol,
@@ -127,29 +131,35 @@ public fun create_coin(
         reserve_balance: balance::zero(), // Initialize empty balance
     };
 
+    let coin_address = object::uid_to_address(&coin_info.id);
     // Emit creation event
     event::emit(CoinCreated {
         name,
         symbol,
         creator: tx_context::sender(ctx),
-        coin_address: object::uid_to_address(&coin_info.id),
+        coin_address: coin_address,
         launch_time: tx_context::epoch(ctx),
     });
 
     token_launcher::increment_coins_count(launchpad);
     token_launcher::add_to_registry(registry, object::uid_to_address(&coin_info.id));
-    coin_info
+
+    // Share the coin info object instead of returning it
+    transfer::share_object(coin_info);
+
+    // Return the address so caller knows where to find it
+    coin_address
 }
 
 // Calculate transaction fee
-fun calculate_transaction_fee(amount: u64): u64 {
+public fun calculate_transaction_fee(amount: u64): u64 {
     (amount * TRANSACTION_FEE_BPS) / BPS_DENOMINATOR
 }
 
 // === Buy functionality ===
-public entry fun buy_tokens(
+public entry fun buy_tokens<T>(
     launchpad: &token_launcher::Launchpad,
-    coin_info: &mut CoinInfo,
+    coin_info: &mut CoinInfo<T>,
     payment: &mut Coin<SUI>,
     amount: u64,
     ctx: &mut TxContext,
@@ -205,10 +215,10 @@ public entry fun buy_tokens(
 }
 
 // === Sell functionality ===
-public entry fun sell_tokens(
+public entry fun sell_tokens<T>(
     launchpad: &token_launcher::Launchpad,
-    coin_info: &mut CoinInfo,
-    tokens: Coin<COIN>,
+    coin_info: &mut CoinInfo<T>,
+    tokens: Coin<T>,
     ctx: &mut TxContext,
 ) {
     let amount = coin::value(&tokens);
@@ -255,7 +265,7 @@ public entry fun sell_tokens(
 }
 
 // View functions
-public fun get_coin_info(info: &CoinInfo): (String, String, Url, address, u64, u64) {
+public fun get_coin_info<T>(info: &CoinInfo<T>): (String, String, Url, address, u64, u64) {
     (
         info.name,
         info.symbol,
@@ -267,36 +277,44 @@ public fun get_coin_info(info: &CoinInfo): (String, String, Url, address, u64, u
 }
 
 // Get current spot price of the coin
-public fun get_current_price(coin_info: &CoinInfo): u64 {
+public fun get_current_price<T>(coin_info: &CoinInfo<T>): u64 {
     bonding_curve::calculate_price(coin_info.supply)
 }
 
 // Get cost to buy specific amount
-public fun get_purchase_cost(coin_info: &CoinInfo, amount: u64): u64 {
+public fun get_purchase_cost<T>(coin_info: &CoinInfo<T>, amount: u64): u64 {
     bonding_curve::calculate_purchase_cost(coin_info.supply, amount)
 }
 
 // Get return amount for selling specific amount
-public fun get_sale_return(coin_info: &CoinInfo, amount: u64): u64 {
+public fun get_sale_return<T>(coin_info: &CoinInfo<T>, amount: u64): u64 {
     bonding_curve::calculate_sale_return(coin_info.supply, amount)
 }
 
 // Get just the supply
-public fun get_supply(info: &CoinInfo): u64 {
+public fun get_supply<T>(info: &CoinInfo<T>): u64 {
     info.supply
 }
 
 // Get just the reserve balance
-public fun get_reserve(info: &CoinInfo): u64 {
+public fun get_reserve<T>(info: &CoinInfo<T>): u64 {
     balance::value(&info.reserve_balance)
 }
 
 // Get creator address
-public fun get_creator(info: &CoinInfo): address {
+public fun get_creator<T>(info: &CoinInfo<T>): address {
     info.creator
 }
 
 // Get launch time
-public fun get_launch_time(info: &CoinInfo): u64 {
+public fun get_launch_time<T>(info: &CoinInfo<T>): u64 {
     info.launch_time
+}
+
+// Extracted validation logic for testing
+public fun validate_inputs(name: String, symbol: String): bool {
+    std::string::length(&name) > 0 && 
+    std::string::length(&name) <= MAX_NAME_LENGTH &&
+    std::string::length(&symbol) > 0 && 
+    std::string::length(&symbol) <= MAX_SYMBOL_LENGTH
 }

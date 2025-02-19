@@ -1,6 +1,5 @@
 module wagmint::bonding_curve_tests;
 
-use std::debug;
 use wagmint::bonding_curve;
 
 // Test error codes
@@ -48,9 +47,6 @@ fun test_purchase_and_sale_same_amount() {
 
     let purchase_cost = bonding_curve::calculate_purchase_cost(initial_supply, amount);
     let sale_return = bonding_curve::calculate_sale_return(initial_supply + amount, amount);
-
-    debug::print(&purchase_cost);
-    debug::print(&sale_return);
 
     // Both should be 55
     assert!(purchase_cost == 55, E_WRONG_PURCHASE_COST);
