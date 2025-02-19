@@ -3,11 +3,16 @@ module wagmint::coin_manager_tests;
 
 use std::string::String;
 use sui::balance;
+use sui::coin;
 use sui::sui::SUI;
+use sui::test_scenario;
 use wagmint::bonding_curve;
 use wagmint::coin_manager;
+use wagmint::token_launcher::{Self, Launchpad};
 
-public struct TEST_DUMMY has drop {}
+// Test addresses
+const ADMIN: address = @0xAD;
+const USER: address = @0xB0B;
 
 // Test error codes
 const E_WRONG_FEE_CALCULATION: u64 = 100;
@@ -57,6 +62,67 @@ fun test_metadata_validation() {
 }
 
 #[test]
+fun test_buy_tokens_helper() {
+    let mut scenario = test_scenario::begin(ADMIN);
+
+    // Setup launchpad
+    scenario.next_tx(ADMIN);
+    {
+        token_launcher::create_launchpad_for_testing(scenario.ctx());
+    };
+
+    // Test buy_tokens_helper
+    scenario.next_tx(USER);
+    {
+        let launchpad = scenario.take_shared<Launchpad>();
+
+        // Create a payment coin with sufficient funds
+        let mut payment = coin::mint_for_testing<SUI>(10_000_000_000, scenario.ctx());
+        let initial_payment_value = coin::value(&payment);
+
+        // Create reserve balance
+        let mut reserve_balance = balance::zero<SUI>();
+
+        // Parameters for buying
+        let current_supply = 1000;
+        let buy_amount = 100;
+
+        // Expected calculations for verification
+        let expected_base_cost = bonding_curve::calculate_purchase_cost(current_supply, buy_amount);
+        let expected_fee = coin_manager::calculate_transaction_fee(expected_base_cost);
+        let expected_total_cost = expected_base_cost + expected_fee;
+
+        // Call the helper function
+        let cost = coin_manager::buy_tokens_helper(
+            &launchpad,
+            current_supply,
+            buy_amount,
+            &mut payment,
+            &mut reserve_balance,
+            scenario.ctx(),
+        );
+
+        // Verify the cost amount returned
+        assert!(cost == expected_base_cost, 0);
+
+        // Verify payment was deducted correctly
+        let expected_payment_remaining = initial_payment_value - expected_total_cost;
+        assert!(coin::value(&payment) == expected_payment_remaining, 1);
+
+        // Verify reserve balance was updated correctly
+        let expected_reserve = expected_base_cost;
+        assert!(balance::value(&reserve_balance) == expected_reserve, 2);
+
+        // Clean up
+        balance::destroy_for_testing(reserve_balance);
+        sui::transfer::public_transfer(payment, USER);
+        test_scenario::return_shared(launchpad);
+    };
+
+    scenario.end();
+}
+
+#[test]
 fun test_buy_token_calculations() {
     // Test scenario: Buy 100 tokens with current supply of 10000
     let current_supply = 10000;
@@ -79,6 +145,73 @@ fun test_buy_token_calculations() {
     let old_price = bonding_curve::calculate_price(current_supply);
 
     assert!(new_price > old_price, 3); // Price should increase
+}
+
+#[test]
+fun test_sell_tokens_helper() {
+    let mut scenario = test_scenario::begin(ADMIN);
+
+    // Setup launchpad
+    scenario.next_tx(ADMIN);
+    {
+        token_launcher::create_launchpad_for_testing(scenario.ctx());
+    };
+
+    // Test sell_tokens_helper
+    scenario.next_tx(USER);
+    {
+        let launchpad = scenario.take_shared<Launchpad>();
+
+        // Create initial reserve balance with sufficient funds
+        let initial_reserve = 1_000_000_000; // 1 SUI
+        let mut reserve_balance = balance::create_for_testing<SUI>(initial_reserve);
+
+        // Parameters for selling
+        let current_supply = 1000;
+        let sell_amount = 100;
+
+        // Expected calculations
+        let expected_return = bonding_curve::calculate_sale_return(current_supply, sell_amount);
+        let expected_fee = coin_manager::calculate_transaction_fee(expected_return);
+        let expected_final_return = expected_return - expected_fee;
+        let expected_new_supply = current_supply - sell_amount;
+
+        // Call the helper function
+        let (new_supply, actual_return, return_coin) = coin_manager::sell_tokens_helper(
+            &launchpad,
+            current_supply,
+            sell_amount,
+            &mut reserve_balance,
+            scenario.ctx(),
+        );
+
+        // Verify new supply
+        assert!(new_supply == expected_new_supply, 0);
+
+        // Verify return amount
+        assert!(actual_return == expected_return, 1);
+
+        // Verify coin value returned
+        assert!(coin::value(&return_coin) == expected_final_return, 2);
+
+        // Verify reserve balance was updated correctly
+        // Reserve should be reduced by expected_return
+        let expected_remaining_reserve = initial_reserve - expected_return;
+        assert!(balance::value(&reserve_balance) == expected_remaining_reserve, 3);
+
+        // Verify fee was taken correctly
+        // The fee Coin is sent to admin, so we can't check it directly
+        // But we can infer it from other values:
+        let inferred_fee = expected_return - expected_final_return;
+        assert!(inferred_fee == expected_fee, 4);
+
+        // Clean up
+        balance::destroy_for_testing(reserve_balance);
+        sui::transfer::public_transfer(return_coin, USER);
+        test_scenario::return_shared(launchpad);
+    };
+
+    test_scenario::end(scenario);
 }
 
 // Test sell token logic

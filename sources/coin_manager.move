@@ -157,18 +157,15 @@ public fun calculate_transaction_fee(amount: u64): u64 {
 }
 
 // === Buy functionality ===
-public entry fun buy_tokens<T>(
+public fun buy_tokens_helper(
     launchpad: &token_launcher::Launchpad,
-    coin_info: &mut CoinInfo<T>,
-    payment: &mut Coin<SUI>,
+    supply: u64,
     amount: u64,
+    payment: &mut Coin<SUI>,
+    reserve_balance: &mut Balance<SUI>,
     ctx: &mut TxContext,
-) {
-    // Validate amount
-    assert!(amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
-
-    // Calculate base cost and fee
-    let base_cost = bonding_curve::calculate_purchase_cost(coin_info.supply, amount);
+): u64 {
+    let base_cost = bonding_curve::calculate_purchase_cost(supply, amount);
     let fee = calculate_transaction_fee(base_cost);
     let total_cost = base_cost + fee;
 
@@ -187,15 +184,27 @@ public entry fun buy_tokens<T>(
     );
 
     // Add remaining to reserve
-    balance::join(&mut coin_info.reserve_balance, paid_balance);
+    balance::join(reserve_balance, paid_balance);
+    base_cost
+}
 
-    // Calculate cost in SUI
-    let cost = bonding_curve::calculate_purchase_cost(coin_info.supply, amount);
-
-    // Extract payment
-    let paid = coin::split(payment, cost, ctx);
-    let paid_balance = coin::into_balance(paid);
-    balance::join(&mut coin_info.reserve_balance, paid_balance);
+public entry fun buy_tokens<T>(
+    launchpad: &token_launcher::Launchpad,
+    coin_info: &mut CoinInfo<T>,
+    payment: &mut Coin<SUI>,
+    amount: u64,
+    ctx: &mut TxContext,
+) {
+    // Validate amount
+    assert!(amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
+    let cost = buy_tokens_helper(
+        launchpad,
+        coin_info.supply,
+        amount,
+        payment,
+        &mut coin_info.reserve_balance,
+        ctx,
+    );
 
     // Mint new tokens
     let treasury_cap = &mut coin_info.treasury_cap;
@@ -215,6 +224,40 @@ public entry fun buy_tokens<T>(
 }
 
 // === Sell functionality ===
+public fun sell_tokens_helper(
+    launchpad: &token_launcher::Launchpad,
+    supply: u64,
+    amount: u64,
+    reserve_balance: &mut Balance<SUI>,
+    ctx: &mut TxContext,
+): (u64, u64, Coin<SUI>) {
+    // Calculate return amount
+    let return_amount = bonding_curve::calculate_sale_return(supply, amount);
+
+    // Validate reserve has enough
+    assert!(balance::value(reserve_balance) >= return_amount, E_INSUFFICIENT_BALANCE);
+
+    // Calculate fee and final return amount
+    let fee = calculate_transaction_fee(return_amount);
+    let final_return_amount = return_amount - fee;
+
+    // Update supply
+    let new_supply = supply - amount;
+
+    // Take fee and return amount from reserve
+    let fee_payment = balance::split(reserve_balance, fee);
+    let return_payment = balance::split(reserve_balance, final_return_amount);
+
+    // Transfer fee to admin
+    transfer::public_transfer(
+        coin::from_balance(fee_payment, ctx),
+        token_launcher::get_admin(launchpad),
+    );
+
+    let return_coin = coin::from_balance(return_payment, ctx);
+    (new_supply, return_amount, return_coin)
+}
+
 public entry fun sell_tokens<T>(
     launchpad: &token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
@@ -223,36 +266,23 @@ public entry fun sell_tokens<T>(
 ) {
     let amount = coin::value(&tokens);
 
-    // Calculate return amount and fee
-    let return_amount = bonding_curve::calculate_sale_return(coin_info.supply, amount);
-    let fee = calculate_transaction_fee(return_amount);
-    let final_return_amount = return_amount - fee;
-
-    // Validate reserve has enough balance
-    assert!(balance::value(&coin_info.reserve_balance) >= return_amount, E_INSUFFICIENT_BALANCE);
-
     // Burn the tokens
     let treasury_cap = &mut coin_info.treasury_cap;
     coin::burn(treasury_cap, tokens);
 
+    let (new_supply, return_amount, return_coin) = sell_tokens_helper(
+        launchpad,
+        coin_info.supply,
+        amount,
+        &mut coin_info.reserve_balance,
+        ctx,
+    );
+
+    // Transfer return amount to seller
+    transfer::public_transfer(return_coin, tx_context::sender(ctx));
+
     // Update supply
-    coin_info.supply = coin_info.supply - amount;
-
-    // Take fee and return amount from reserve
-    let fee_payment = balance::split(&mut coin_info.reserve_balance, fee);
-    let return_payment = balance::split(&mut coin_info.reserve_balance, final_return_amount);
-
-    // Transfer fee to admin
-    transfer::public_transfer(
-        coin::from_balance(fee_payment, ctx),
-        token_launcher::get_admin(launchpad),
-    );
-
-    // Send remaining amount to seller
-    transfer::public_transfer(
-        coin::from_balance(return_payment, ctx),
-        tx_context::sender(ctx),
-    );
+    coin_info.supply = new_supply;
 
     event::emit(TokensSold {
         coin_address: object::uid_to_address(&coin_info.id),
