@@ -35,7 +35,7 @@ public struct CoinInfo<phantom T> has key, store {
     image_url: Url,
     creator: address,
     launch_time: u64,
-    treasury_cap: TreasuryCap<T>, // We'll need to make this generic
+    treasury_cap: TreasuryCap<T>,
     supply: u64, // Track supply for bonding curve
     reserve_balance: Balance<SUI>, // Track reserve balance
 }
