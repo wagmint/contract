@@ -2,13 +2,16 @@
 module wagmint::coin_manager_tests;
 
 use std::string::String;
+use std::string;
 use sui::balance;
 use sui::coin;
 use sui::sui::SUI;
 use sui::test_scenario;
 use wagmint::bonding_curve;
+use wagmint::coin_manager::{CoinInfo};
+use wagmint::test_coin::{get_witness, TEST_COIN};
 use wagmint::coin_manager;
-use wagmint::token_launcher::{Self, Launchpad};
+use wagmint::token_launcher::{Self, Launchpad, LaunchedCoinsRegistry};
 
 // Test addresses
 const ADMIN: address = @0xAD;
@@ -296,4 +299,106 @@ fun test_buy_sell_roundtrip() {
     // Calculate fees kept by platform
     let platform_revenue = total_buy_cost - final_sell_return;
     assert!(platform_revenue == buy_fee + sell_fee, 2);
+}
+
+// Helper struct to store addresses between transactions
+// Define this in your test module
+public struct AddressHolder has key, store {
+    id: UID,
+    addr: address
+}
+
+
+#[test]
+fun test_create_coin() {
+    let mut scenario = test_scenario::begin(ADMIN);
+
+    // Setup launchpad
+    scenario.next_tx(ADMIN);
+    {
+        token_launcher::create_launchpad_for_testing(scenario.ctx());
+    };
+    
+    // Get a witness type for testing
+    scenario.next_tx(ADMIN);
+    {
+        // First make sure we have the launchpad and registry created from init
+        let mut launchpad = scenario.take_shared<Launchpad>();
+        let mut registry = scenario.take_shared<LaunchedCoinsRegistry>();
+        
+        // Generate 10 SUI for payment
+        let mut payment = coin::mint_for_testing<SUI>(10_000_000_000, scenario.ctx());
+        
+        // Call the create_coin function with the test coin
+        let coin_address = coin_manager::create_coin<TEST_COIN>(
+             get_witness(),
+            &mut launchpad,
+            &mut registry,
+            &mut payment,
+            string::utf8(b"Test Coin"),
+            string::utf8(b"TST_SYMBL"),
+            string::utf8(b"A test coin for unit testing"),
+            b"https://example.com/image.png",
+            option::none(),
+            scenario.ctx()
+        );
+        
+        // Return shared objects
+        test_scenario::return_shared(launchpad);
+        test_scenario::return_shared(registry);
+        
+        // Return any leftover payment
+        coin::burn_for_testing(payment);
+        
+        // Save the coin_address for verification in next tx
+        // Create a dummy object to store the address
+        let address_wrapper = AddressHolder {
+            id: object::new(scenario.ctx()),
+            addr: coin_address
+        };
+        transfer::transfer(address_wrapper, ADMIN);
+
+    };
+    
+    // Verify the coin was created correctly
+    scenario.next_tx(ADMIN);
+    {
+        // Take the saved address from the holder object
+        let address_holder = scenario.take_from_sender<AddressHolder>();
+        let coin_address = address_holder.addr;
+        let AddressHolder { id, addr: _ } = address_holder;
+
+        // Take the shared objects
+        let launchpad = scenario.take_shared<Launchpad>();
+        let registry = scenario.take_shared<LaunchedCoinsRegistry>();
+        
+        // Retrieve the created coin info
+        let coin_info = scenario.take_shared_by_id<CoinInfo<TEST_COIN>>(object::id_from_address(coin_address));
+        
+        // Verify basic properties
+        let ci_name = coin_info.get_name();
+        let symbol = coin_info.get_symbol();
+        let creator = coin_info.get_creator();
+        // let supply = coin_info.get_supply();
+        
+
+        assert!(ci_name == string::utf8(b"Test Coin"), 0);
+        assert!(symbol == string::utf8(b"TST_SYMBL"), 1);
+        assert!(creator == ADMIN, 2);
+        // assert!(supply > 0, 4); // Check that supply is positive
+        
+        // Verify launchpad and registry were updated
+        assert!(token_launcher::launched_coins_count(&launchpad) == 1, 5);
+        assert!(vector::length(&token_launcher::get_launched_coins(&registry)) == 1, 6);
+        
+        // Return shared objects
+        test_scenario::return_shared(coin_info);
+        test_scenario::return_shared(launchpad);
+        test_scenario::return_shared(registry);
+        
+        // Clean up the address holder
+        object::delete(id);
+    };
+    
+    scenario.end();
 }
