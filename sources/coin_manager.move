@@ -367,7 +367,6 @@ public fun set_supply<T>(info: &mut CoinInfo<T>, new_supply: u64) {
     info.supply = new_supply;
 }
 
-
 // Extracted validation logic for testing
 public fun validate_inputs(name: String, symbol: String): bool {
     std::string::length(&name) > 0 && 

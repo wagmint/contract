@@ -7,6 +7,7 @@ use sui::balance;
 use sui::coin;
 use sui::sui::SUI;
 use sui::test_scenario;
+use std::debug;
 use wagmint::bonding_curve;
 use wagmint::coin_manager::{CoinInfo};
 use wagmint::test_coin::{get_witness, TEST_COIN};
@@ -400,7 +401,69 @@ fun test_create_coin() {
         // object::delete(id);
     };
 
-    // Minic the sell_tokens operation
+    // Mimic the buy_tokens operation
+    scenario.next_tx(ADMIN);
+    {
+        // Create a payment coin with sufficient funds
+        let mut payment = coin::mint_for_testing<SUI>(10_000_000_000, scenario.ctx());
+        // let initial_payment_value = coin::value(&payment);
+
+        // Create reserve balance
+        // let mut reserve_balance = balance::zero<SUI>();
+
+        // Take the saved address from the holder object
+        let address_holder = scenario.take_from_sender<AddressHolder>();
+        let coin_address = address_holder.addr;
+
+        // Parameters for buying
+        // let current_supply = 1000;
+        let buy_amount = 100;
+
+        // Expected calculations for verification
+        // let expected_base_cost = bonding_curve::calculate_purchase_cost(current_supply, buy_amount);
+        // let expected_fee = coin_manager::calculate_transaction_fee(expected_base_cost);
+        // let expected_total_cost = expected_base_cost + expected_fee;
+
+        // Take the shared objects
+        let launchpad = scenario.take_shared<Launchpad>();
+        let registry = scenario.take_shared<LaunchedCoinsRegistry>();
+
+        // Retrieve the created coin info
+        let mut coin_info = scenario.take_shared_by_id<CoinInfo<TEST_COIN>>(object::id_from_address(coin_address));
+
+        // log coin_info.reserve_balance();
+        debug::print(&coin_info.get_reserve_balance().value());
+        debug::print(&string::utf8(b"Initial reserve balance:"));
+        debug::print(&coin_info.get_reserve_balance().value());
+        debug::print(&string::utf8(b"Payment amount:"));
+
+
+        // Call the buy_tokens function
+        coin_manager::buy_tokens<TEST_COIN>(
+            &launchpad,
+            &mut coin_info,
+            &mut payment,
+            buy_amount,
+            scenario.ctx()
+        );
+
+        // log coin_info.reserve_balance();
+        debug::print(&coin_info.get_reserve_balance().value());
+        debug::print(&string::utf8(b"Initial reserve balance:"));
+        debug::print(&coin_info.get_reserve_balance().value());
+        debug::print(&string::utf8(b"Payment amount:"));
+
+
+        // Return shared objects
+        test_scenario::return_shared(coin_info);
+        test_scenario::return_shared(launchpad);
+        test_scenario::return_shared(registry);
+        coin::burn_for_testing(payment);
+        test_scenario::return_to_sender(&scenario, address_holder)
+        
+    };
+
+    // Mimic the sell_tokens operation
     scenario.next_tx(ADMIN);
     {
         // Take the saved address from the holder object
@@ -420,12 +483,7 @@ fun test_create_coin() {
 
         // Update the current supply in the coin_info
         coin_info.set_supply(current_supply);
-
-        // Create initial reserve balance with sufficient funds
-        // let initial_reserve = 1_000_000_000; // 1 SUI
-        // let mut reserve_balance = balance::create_for_testing<SUI>(initial_reserve);
-
-
+        
         // Expected calculations
         let expected_return = bonding_curve::calculate_sale_return(current_supply, sell_amount);
         let expected_fee = coin_manager::calculate_transaction_fee(expected_return);
