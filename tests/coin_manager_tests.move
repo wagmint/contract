@@ -394,7 +394,7 @@ fun test_create_coin() {
         test_scenario::return_shared(coin_info);
         test_scenario::return_shared(launchpad);
         test_scenario::return_shared(registry);
-        test_scenario::return_shared(address_holder);
+        test_scenario::return_to_sender(&scenario, address_holder);
         
         // Clean up the address holder
         // object::delete(id);
