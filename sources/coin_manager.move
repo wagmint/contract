@@ -341,6 +341,22 @@ public fun get_launch_time<T>(info: &CoinInfo<T>): u64 {
     info.launch_time
 }
 
+// Get symbol
+public fun get_symbol<T>(info: &CoinInfo<T>): String {
+    info.symbol
+}
+
+// Get name
+public fun get_name<T>(info: &CoinInfo<T>): String {
+    info.name
+}
+
+// Get image URL
+public fun get_image_url<T>(info: &CoinInfo<T>): Url {
+    info.image_url
+}
+
+
 // Extracted validation logic for testing
 public fun validate_inputs(name: String, symbol: String): bool {
     std::string::length(&name) > 0 && 
