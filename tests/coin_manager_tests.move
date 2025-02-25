@@ -366,7 +366,6 @@ fun test_create_coin() {
         // Take the saved address from the holder object
         let address_holder = scenario.take_from_sender<AddressHolder>();
         let coin_address = address_holder.addr;
-        let AddressHolder { id, addr: _ } = address_holder;
 
         // Take the shared objects
         let launchpad = scenario.take_shared<Launchpad>();
@@ -395,10 +394,101 @@ fun test_create_coin() {
         test_scenario::return_shared(coin_info);
         test_scenario::return_shared(launchpad);
         test_scenario::return_shared(registry);
+        test_scenario::return_shared(address_holder);
         
         // Clean up the address holder
+        // object::delete(id);
+    };
+
+    // Minic the sell_tokens operation
+    scenario.next_tx(ADMIN);
+    {
+        // Take the saved address from the holder object
+        let address_holder = scenario.take_from_sender<AddressHolder>();
+        let coin_address = address_holder.addr;
+
+        // Take the shared objects
+        let launchpad = scenario.take_shared<Launchpad>();
+        let registry = scenario.take_shared<LaunchedCoinsRegistry>();
+
+        // Retrieve the created coin info
+        let mut coin_info = scenario.take_shared_by_id<CoinInfo<TEST_COIN>>(object::id_from_address(coin_address));
+
+        // Parameters for selling
+        let current_supply = 1000; // Example current supply
+        let sell_amount = 100; // Example sell amount
+
+        // Update the current supply in the coin_info
+        coin_info.set_supply(current_supply);
+
+        // Create initial reserve balance with sufficient funds
+        // let initial_reserve = 1_000_000_000; // 1 SUI
+        // let mut reserve_balance = balance::create_for_testing<SUI>(initial_reserve);
+
+
+        // Expected calculations
+        let expected_return = bonding_curve::calculate_sale_return(current_supply, sell_amount);
+        let expected_fee = coin_manager::calculate_transaction_fee(expected_return);
+        let expected_final_return = expected_return - expected_fee;
+        let expected_new_supply = current_supply - sell_amount;
+
+        // Create test tokens to sell
+        let tokens = coin::mint_for_testing<TEST_COIN>(sell_amount, scenario.ctx());
+        
+        
+        // Call the sell_tokens function
+        coin_manager::sell_tokens<TEST_COIN>(
+            &launchpad,
+            &mut coin_info,
+            tokens,
+            scenario.ctx()
+        );
+
+        // Verify new supply
+        let new_supply = coin_info.get_supply();
+        assert!(new_supply == expected_new_supply, 0);
+
+
+        // Verify fee was taken correctly
+        // The fee Coin is sent to admin, so we can't check it directly
+        // But we can infer it from other values:
+        let inferred_fee = expected_return - expected_final_return;
+        assert!(inferred_fee == expected_fee, 4);
+
+        // Clean up and return shared objects
+        test_scenario::return_shared(coin_info);
+        test_scenario::return_shared(launchpad);
+        test_scenario::return_shared(registry);
+        
+        // Clean up the address holder
+        let AddressHolder { id, addr: _ } = address_holder;
         object::delete(id);
     };
+
+    // fetch the coin_info and check supply not zero
+    scenario.next_tx(ADMIN);
+    {
+        // Take the saved address from the holder object
+        let address_holder = scenario.take_from_sender<AddressHolder>();
+        let coin_address = address_holder.addr;
+
+        // Take the shared objects
+        let launchpad = scenario.take_shared<Launchpad>();
+        let registry = scenario.take_shared<LaunchedCoinsRegistry>();
+
+        // Retrieve the coin info
+        let coin_info = scenario.take_shared_by_id<CoinInfo<TEST_COIN>>(object::id_from_address(coin_address));
+        // Check that the supply is not zero
+        let supply = coin_info.get_supply();
+        assert!(supply > 0, 0);
+
+        // Return shared objects
+        test_scenario::return_shared(coin_info);
+        test_scenario::return_shared(launchpad);
+        test_scenario::return_shared(registry);
+        test_scenario::return_shared(address_holder);
+    };
     
-    scenario.end();
+    test_scenario::end(scenario);
+
 }

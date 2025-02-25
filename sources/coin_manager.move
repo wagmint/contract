@@ -356,6 +356,17 @@ public fun get_image_url<T>(info: &CoinInfo<T>): Url {
     info.image_url
 }
 
+// Get reserve balance
+public fun get_reserve_balance<T>(info: &CoinInfo<T>): &Balance<SUI> {
+    &info.reserve_balance
+}
+
+// Set supply, only for testing
+#[test_only]
+public fun set_supply<T>(info: &mut CoinInfo<T>, new_supply: u64) {
+    info.supply = new_supply;
+}
+
 
 // Extracted validation logic for testing
 public fun validate_inputs(name: String, symbol: String): bool {
