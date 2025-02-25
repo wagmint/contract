@@ -115,7 +115,7 @@ fun test_buy_tokens_helper() {
 
         // Clean up
         balance::destroy_for_testing(reserve_balance);
-        sui::transfer::public_transfer(payment, USER);
+        sui::test_utils::destroy(payment);
         test_scenario::return_shared(launchpad);
     };
 
