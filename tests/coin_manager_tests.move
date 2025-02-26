@@ -1,7 +1,6 @@
 #[test_only]
 module wagmint::coin_manager_tests;
 
-use std::debug;
 use std::string::{Self, String};
 use sui::balance;
 use sui::coin;
@@ -377,12 +376,10 @@ fun test_create_coin() {
         let ci_name = coin_info.get_name();
         let symbol = coin_info.get_symbol();
         let creator = coin_info.get_creator();
-        // let supply = coin_info.get_supply();
 
         assert!(ci_name == string::utf8(b"Test Coin"), 0);
         assert!(symbol == string::utf8(b"TST_SYMBL"), 1);
         assert!(creator == ADMIN, 2);
-        // assert!(supply > 0, 4); // Check that supply is positive
 
         // Verify launchpad and registry were updated
         assert!(token_launcher::launched_coins_count(&launchpad) == 1, 5);
@@ -393,9 +390,6 @@ fun test_create_coin() {
         test_scenario::return_shared(launchpad);
         test_scenario::return_shared(registry);
         test_scenario::return_to_sender(&scenario, address_holder);
-
-        // Clean up the address holder
-        // object::delete(id);
     };
 
     // Mimic the buy_tokens operation
@@ -403,23 +397,13 @@ fun test_create_coin() {
     {
         // Create a payment coin with sufficient funds
         let mut payment = coin::mint_for_testing<SUI>(10_000_000_000, scenario.ctx());
-        // let initial_payment_value = coin::value(&payment);
-
-        // Create reserve balance
-        // let mut reserve_balance = balance::zero<SUI>();
 
         // Take the saved address from the holder object
         let address_holder = scenario.take_from_sender<AddressHolder>();
         let coin_address = address_holder.addr;
 
         // Parameters for buying
-        // let current_supply = 1000;
         let buy_amount = 10000;
-
-        // Expected calculations for verification
-        // let expected_base_cost = bonding_curve::calculate_purchase_cost(current_supply, buy_amount);
-        // let expected_fee = coin_manager::calculate_transaction_fee(expected_base_cost);
-        // let expected_total_cost = expected_base_cost + expected_fee;
 
         // Take the shared objects
         let launchpad = scenario.take_shared<Launchpad>();
@@ -430,14 +414,6 @@ fun test_create_coin() {
             object::id_from_address(coin_address),
         );
 
-        // log coin_info.reserve_balance();
-        debug::print(&coin_info.get_reserve_balance().value());
-        debug::print(&string::utf8(b"Initial reserve balance:"));
-        debug::print(&coin_info.get_reserve_balance().value());
-        debug::print(&string::utf8(b"Payment amount:"));
-        debug::print(&coin_info.get_supply());
-        debug::print(&string::utf8(b"Supply amount:"));
-
         // Call the buy_tokens function
         coin_manager::buy_tokens<TEST_COIN>(
             &launchpad,
@@ -446,14 +422,6 @@ fun test_create_coin() {
             buy_amount,
             scenario.ctx(),
         );
-
-        // log coin_info.reserve_balance();
-        debug::print(&coin_info.get_reserve_balance().value());
-        debug::print(&string::utf8(b"Initial reserve balance:"));
-        debug::print(&coin_info.get_reserve_balance().value());
-        debug::print(&string::utf8(b"Payment amount:"));
-        debug::print(&coin_info.get_supply());
-        debug::print(&string::utf8(b"Supply amount:"));
 
         // Return shared objects
         test_scenario::return_shared(coin_info);
@@ -480,11 +448,7 @@ fun test_create_coin() {
         );
 
         // Parameters for selling
-        // let current_supply = 1000; // Example current supply
         let sell_amount = 5000; // Example sell amount
-
-        // Update the current supply in the coin_info
-        // coin_info.set_supply(current_supply);
 
         // Expected calculations
         let expected_return = bonding_curve::calculate_sale_return(
@@ -520,10 +484,6 @@ fun test_create_coin() {
         test_scenario::return_shared(coin_info);
         test_scenario::return_shared(launchpad);
         test_scenario::return_shared(registry);
-
-        // Clean up the address holder
-        // let AddressHolder { id, addr: _ } = address_holder;
-        // object::delete(id);
         test_scenario::return_to_sender(&scenario, address_holder);
     };
 
@@ -550,7 +510,6 @@ fun test_create_coin() {
         test_scenario::return_shared(coin_info);
         test_scenario::return_shared(launchpad);
         test_scenario::return_shared(registry);
-        // test_scenario::return_shared(address_holder);
         let AddressHolder { id, addr: _ } = address_holder;
         object::delete(id);
     };
