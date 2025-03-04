@@ -69,8 +69,7 @@ public struct TokensSold has copy, drop {
 
 // First we need function to create a new coin type
 #[allow(lint(share_owned))]
-public fun create_coin<T: drop>(
-    witness: T, // Witness from caller
+public fun create_coin<T>(
     launchpad: &mut token_launcher::Launchpad,
     registry: &mut LaunchedCoinsRegistry,
     payment: &mut Coin<SUI>, // Added payment parameter

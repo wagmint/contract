@@ -2,10 +2,34 @@ module wagmint::token_launcher;
 
 use sui::event;
 
+const MIN_TRADE_AMOUNT: u64 = 1;
+const PLATFORM_FEE_BPS: u64 = 50; // 0.5%
+const BPS_DENOMINATOR: u64 = 10000;
+const DEFAULT_INIT_VIRTUAL_SUI: u64 = 3_000_000_000_000; // 3,000 SUI
+const DEFAULT_INIT_VIRTUAL_TOKEN: u64 = 10_000_000_000_000_000; // 10T tokens
+const DEFAULT_REMAIN_TOKEN: u64 = 2_000_000_000_000_000; // 2T tokens
+const DEFAULT_DECIMAL: u8 = 6;
+const GRADUATION_THRESHOLD: u64 = 6_000_000_000_000; // 6,000 SUI
+const CURRENT_VERSION: u64 = 5;
+
+// Configuration for all tokens
+public struct Configuration has key, store {
+    id: UID,
+    version: u64,
+    admin: address,
+    platform_fee: u64,
+    graduated_fee: u64,
+    initial_virtual_sui_reserves: u64,
+    initial_virtual_token_reserves: u64,
+    remain_token_reserves: u64,
+    token_decimals: u8,
+}
+
 public struct Launchpad has key, store {
     id: UID,
     admin: address,
     launched_coins_count: u64,
+    conifg: Configuration,
 }
 
 public struct LaunchedCoinsRegistry has key {
@@ -13,17 +37,30 @@ public struct LaunchedCoinsRegistry has key {
     coins: vector<address>,
 }
 
-public struct LaunchpadInitialized has copy, drop {
+public struct LaunchpadInitializedEvent has copy, drop {
     admin: address,
 }
 
 const E_NOT_ADMIN: u64 = 0;
 
 fun init(ctx: &mut TxContext) {
+    let config = Configuration {
+        id: object::new(ctx),
+        version: CURRENT_VERSION,
+        admin: tx_context::sender(ctx),
+        platform_fee: PLATFORM_FEE_BPS,
+        graduated_fee: 0,
+        initial_virtual_sui_reserves: DEFAULT_INIT_VIRTUAL_SUI,
+        initial_virtual_token_reserves: DEFAULT_INIT_VIRTUAL_TOKEN,
+        remain_token_reserves: DEFAULT_REMAIN_TOKEN,
+        token_decimals: DEFAULT_DECIMAL,
+    };
+
     let launchpad = Launchpad {
         id: object::new(ctx),
         admin: tx_context::sender(ctx),
         launched_coins_count: 0,
+        conifg: config,
     };
 
     let registry = LaunchedCoinsRegistry {
@@ -32,11 +69,11 @@ fun init(ctx: &mut TxContext) {
     };
 
     // Emit an event when launchpad is initialized
-    event::emit(LaunchpadInitialized {
+    event::emit(LaunchpadInitializedEvent {
         admin: tx_context::sender(ctx),
     });
 
-    transfer::share_object(launchpad);
+    transfer::public_share_object(launchpad);
     transfer::share_object(registry);
 }
 
