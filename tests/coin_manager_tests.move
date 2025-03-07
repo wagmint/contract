@@ -3,13 +3,15 @@ module wagmint::coin_manager_tests;
 
 use std::string::{Self, String};
 use sui::balance;
-use sui::coin;
+use sui::coin::{Self, CoinMetadata, TreasuryCap};
 use sui::sui::SUI;
-use sui::test_scenario;
+use sui::test_scenario::{Self, Scenario};
 use wagmint::bonding_curve;
 use wagmint::coin_manager::{Self, CoinInfo};
-use wagmint::test_coin::{get_witness, TEST_COIN};
+use wagmint::test_coin::{TEST_COIN, create_test_token_for_testing};
 use wagmint::token_launcher::{Self, Launchpad, LaunchedCoinsRegistry};
+
+const PLATFORM_FEE_BPS: u64 = 100; // 1%
 
 // Test addresses
 const ADMIN: address = @0xAD;
@@ -29,17 +31,51 @@ fun check_metadata_validation(name: String, symbol: String): bool {
     }
 }
 
+#[test]
+fun test_init() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    test_init_internal(&mut scenario);
+    scenario.end();
+}
+
+fun test_init_internal(scenario: &mut Scenario) {
+    // Call init function
+    scenario.next_tx(ADMIN);
+    {
+        create_test_token_for_testing(scenario.ctx());
+    };
+
+    // Verify launchpad is created with correct admin
+    scenario.next_tx(ADMIN);
+    {
+        let treasury_cap = scenario.take_from_address<TreasuryCap<TEST_COIN>>(ADMIN);
+        let metadata = scenario.take_from_address<CoinMetadata<TEST_COIN>>(ADMIN);
+
+        test_scenario::return_to_sender(scenario, treasury_cap);
+        test_scenario::return_to_sender(scenario, metadata);
+    };
+}
+
 // Test fee calculation
 #[test]
 fun test_calculate_transaction_fee() {
     // 1% of 1000 = 10
-    assert!(coin_manager::calculate_transaction_fee(1000) == 10, E_WRONG_FEE_CALCULATION);
+    assert!(
+        coin_manager::calculate_transaction_fee(1000, PLATFORM_FEE_BPS) == 10,
+        E_WRONG_FEE_CALCULATION,
+    );
 
     // 1% of 0 = 0
-    assert!(coin_manager::calculate_transaction_fee(0) == 0, E_WRONG_FEE_CALCULATION);
+    assert!(
+        coin_manager::calculate_transaction_fee(0, PLATFORM_FEE_BPS) == 0,
+        E_WRONG_FEE_CALCULATION,
+    );
 
     // 1% of 12345 = 123.45 = 123 (integer division)
-    assert!(coin_manager::calculate_transaction_fee(12345) == 123, E_WRONG_FEE_CALCULATION);
+    assert!(
+        coin_manager::calculate_transaction_fee(12345, PLATFORM_FEE_BPS) == 123,
+        E_WRONG_FEE_CALCULATION,
+    );
 }
 
 // Test name and symbol validation
@@ -90,7 +126,10 @@ fun test_buy_tokens_helper() {
 
         // Expected calculations for verification
         let expected_base_cost = bonding_curve::calculate_purchase_cost(current_supply, buy_amount);
-        let expected_fee = coin_manager::calculate_transaction_fee(expected_base_cost);
+        let expected_fee = coin_manager::calculate_transaction_fee(
+            expected_base_cost,
+            PLATFORM_FEE_BPS,
+        );
         let expected_total_cost = expected_base_cost + expected_fee;
 
         // Call the helper function
@@ -132,7 +171,7 @@ fun test_buy_token_calculations() {
     // Calculate base cost using bonding curve
     let base_cost = bonding_curve::calculate_purchase_cost(current_supply, buy_amount);
     // Calculate fee (1%)
-    let fee = coin_manager::calculate_transaction_fee(base_cost);
+    let fee = coin_manager::calculate_transaction_fee(base_cost, PLATFORM_FEE_BPS);
     let total_cost = base_cost + fee;
 
     // Verify calculations
@@ -173,7 +212,10 @@ fun test_sell_tokens_helper() {
 
         // Expected calculations
         let expected_return = bonding_curve::calculate_sale_return(current_supply, sell_amount);
-        let expected_fee = coin_manager::calculate_transaction_fee(expected_return);
+        let expected_fee = coin_manager::calculate_transaction_fee(
+            expected_return,
+            PLATFORM_FEE_BPS,
+        );
         let expected_final_return = expected_return - expected_fee;
         let expected_new_supply = current_supply - sell_amount;
 
@@ -225,7 +267,7 @@ fun test_sell_token_calculations() {
     // Calculate return amount using bonding curve
     let return_amount = bonding_curve::calculate_sale_return(current_supply, sell_amount);
     // Calculate fee
-    let fee = coin_manager::calculate_transaction_fee(return_amount);
+    let fee = coin_manager::calculate_transaction_fee(return_amount, PLATFORM_FEE_BPS);
     let final_return = return_amount - fee;
 
     // Verify calculations
@@ -278,7 +320,7 @@ fun test_buy_sell_roundtrip() {
 
     // Buy calculation
     let buy_cost = bonding_curve::calculate_purchase_cost(initial_supply, amount);
-    let buy_fee = coin_manager::calculate_transaction_fee(buy_cost);
+    let buy_fee = coin_manager::calculate_transaction_fee(buy_cost, PLATFORM_FEE_BPS);
     let total_buy_cost = buy_cost + buy_fee;
 
     // New state after buy
@@ -286,7 +328,7 @@ fun test_buy_sell_roundtrip() {
 
     // Sell calculation (selling same amount)
     let sell_return = bonding_curve::calculate_sale_return(new_supply, amount);
-    let sell_fee = coin_manager::calculate_transaction_fee(sell_return);
+    let sell_fee = coin_manager::calculate_transaction_fee(sell_return, PLATFORM_FEE_BPS);
     let final_sell_return = sell_return - sell_fee;
 
     // In efficient markets, buy cost should be similar to sell return
@@ -309,6 +351,7 @@ public struct AddressHolder has key, store {
 #[test]
 fun test_create_coin() {
     let mut scenario = test_scenario::begin(ADMIN);
+    test_init_internal(&mut scenario);
 
     // Setup launchpad
     scenario.next_tx(ADMIN);
@@ -322,21 +365,22 @@ fun test_create_coin() {
         // First make sure we have the launchpad and registry created from init
         let mut launchpad = scenario.take_shared<Launchpad>();
         let mut registry = scenario.take_shared<LaunchedCoinsRegistry>();
+        let treasury_cap = scenario.take_from_address<TreasuryCap<TEST_COIN>>(ADMIN);
 
         // Generate 10 SUI for payment
         let mut payment = coin::mint_for_testing<SUI>(10_000_000_000, scenario.ctx());
 
         // Call the create_coin function with the test coin
         let coin_address = coin_manager::create_coin<TEST_COIN>(
-            get_witness(),
             &mut launchpad,
+            treasury_cap,
             &mut registry,
             &mut payment,
             string::utf8(b"Test Coin"),
             string::utf8(b"TST_SYMBL"),
             string::utf8(b"A test coin for unit testing"),
-            b"https://example.com/image.png",
-            option::none(),
+            string::utf8(b"https://example.com"),
+            string::utf8(b"https://example.com/image.png"),
             scenario.ctx(),
         );
 
@@ -455,7 +499,10 @@ fun test_create_coin() {
             coin_info.get_supply(),
             sell_amount,
         );
-        let expected_fee = coin_manager::calculate_transaction_fee(expected_return);
+        let expected_fee = coin_manager::calculate_transaction_fee(
+            expected_return,
+            PLATFORM_FEE_BPS,
+        );
         let expected_final_return = expected_return - expected_fee;
         let expected_new_supply = coin_info.get_supply() - sell_amount;
 

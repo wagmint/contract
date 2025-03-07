@@ -30,6 +30,10 @@ fun test_init_internal(scenario: &mut Scenario) {
 
         assert!(token_launcher::get_admin(&launchpad) == ADMIN, 0);
         assert!(token_launcher::launched_coins_count(&launchpad) == 0, 1);
+        assert!(token_launcher::get_version(&launchpad) == 1, 2);
+        assert!(token_launcher::get_platform_fee(&launchpad) == 100, 3);
+        assert!(token_launcher::get_creation_fee(&launchpad) == 1_000_000_000, 4);
+        assert!(token_launcher::get_graduation_fee(&launchpad) == 0, 5);
         assert!(vector::length(&token_launcher::get_launched_coins(&registry)) == 0, 2);
 
         test_scenario::return_shared(launchpad);
@@ -52,6 +56,56 @@ fun test_update_admin() {
             scenario.ctx(),
         );
         assert!(token_launcher::get_admin(&launchpad) == NEW_ADMIN, 0);
+        test_scenario::return_shared(launchpad);
+    };
+
+    scenario.end();
+}
+
+#[test]
+fun test_update_config() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    test_init_internal(&mut scenario);
+
+    // Call and verify update_launchpad_config function
+    scenario.next_tx(ADMIN);
+    {
+        let mut launchpad = scenario.take_shared<Launchpad>();
+        token_launcher::update_launchpad_config(
+            &mut launchpad,
+            2,
+            200,
+            2_000_000_000,
+            1_000_000_000,
+            scenario.ctx(),
+        );
+        assert!(token_launcher::get_version(&launchpad) == 2, 0);
+        assert!(token_launcher::get_platform_fee(&launchpad) == 200, 1);
+        assert!(token_launcher::get_creation_fee(&launchpad) == 2_000_000_000, 2);
+        assert!(token_launcher::get_graduation_fee(&launchpad) == 1_000_000_000, 3);
+        test_scenario::return_shared(launchpad);
+    };
+
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = token_launcher::E_NOT_ADMIN)]
+fun test_update_config_by_non_admin() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    test_init_internal(&mut scenario);
+
+    scenario.next_tx(USER);
+    {
+        let mut launchpad = scenario.take_shared<Launchpad>();
+        token_launcher::update_launchpad_config(
+            &mut launchpad,
+            200,
+            2_000_000_000,
+            1_000_000_000,
+            0,
+            scenario.ctx(),
+        );
         test_scenario::return_shared(launchpad);
     };
 
