@@ -23,33 +23,41 @@ const MAX_SYMBOL_LENGTH: u64 = 10;
 const MIN_TRADE_AMOUNT: u64 = 1;
 
 // Constants
-const MIN_CREATION_FEE: u64 = 1_000_000_000; // 1 SUI = 1_000_000_000
-const TRANSACTION_FEE_BPS: u64 = 100; // 1% = 100 basis points
+const MIN_CREATION_FEE: u64 = 500_000_000; // 0.5 SUI
 const BPS_DENOMINATOR: u64 = 10000;
+
+// Protected version of the treasury cap
+public struct ProtectedTreasuryCap<phantom T> has store {
+    cap: TreasuryCap<T>,
+}
 
 // This represents our custom coin properties
 public struct CoinInfo<phantom T> has key, store {
     id: UID,
     name: String,
     symbol: String,
+    description: String,
     image_url: Url,
     creator: address,
     launch_time: u64,
-    treasury_cap: TreasuryCap<T>,
+    protected_cap: ProtectedTreasuryCap<T>,
     supply: u64, // Track supply for bonding curve
     reserve_balance: Balance<SUI>, // Track reserve balance
 }
 
 // Events
-public struct CoinCreated has copy, drop {
+public struct CoinCreatedEvent has copy, drop {
     name: String,
     symbol: String,
+    image_url: String,
+    description: String,
+    website: String,
     creator: address,
     coin_address: address,
     launch_time: u64,
 }
 
-public struct TokensPurchased has copy, drop {
+public struct TokensPurchasedEvent has copy, drop {
     coin_address: address,
     buyer: address,
     amount: u64,
@@ -58,101 +66,18 @@ public struct TokensPurchased has copy, drop {
     new_price: u64,
 }
 
-public struct TokensSold has copy, drop {
+public struct TokensSoldEvent has copy, drop {
     coin_address: address,
     seller: address,
     amount: u64,
-    return_amount: u64,
+    return_cost: u64,
     new_supply: u64,
     new_price: u64,
 }
 
-// First we need function to create a new coin type
-#[allow(lint(share_owned))]
-public fun create_coin<T>(
-    launchpad: &mut token_launcher::Launchpad,
-    registry: &mut LaunchedCoinsRegistry,
-    payment: &mut Coin<SUI>, // Added payment parameter
-    name: String,
-    symbol: String,
-    description: String,
-    image_url: vector<u8>,
-    mut custom_fee: Option<u64>,
-    ctx: &mut TxContext,
-): address {
-    // Validate inputs
-    assert!(
-        std::string::length(&name) > 0 && std::string::length(&name) <= MAX_NAME_LENGTH,
-        E_INVALID_NAME_LENGTH,
-    );
-    assert!(
-        std::string::length(&symbol) > 0 && std::string::length(&symbol) <= MAX_SYMBOL_LENGTH,
-        E_INVALID_SYMBOL_LENGTH,
-    );
-
-    // Determine fee - use custom fee if provided and >= MIN_CREATION_FEE
-    let fee_amount = if (option::is_some(&custom_fee)) {
-        let custom_amount = option::extract(&mut custom_fee);
-        u64::max(custom_amount, MIN_CREATION_FEE)
-    } else {
-        MIN_CREATION_FEE
-    };
-
-    // Validate payment
-    let payment_amount = coin::value(payment);
-    assert!(payment_amount >= fee_amount, E_INSUFFICIENT_PAYMENT);
-
-    // Take the determined fee
-    let fee = coin::split(payment, fee_amount, ctx);
-    transfer::public_transfer(fee, token_launcher::get_admin(launchpad));
-
-    // Create the coin with treasury cap
-    let (treasury_cap, metadata) = coin::create_currency(
-        witness,
-        9, // decimals
-        *as_bytes(&symbol),
-        *as_bytes(&name),
-        *as_bytes(&description),
-        option::some(url::new_unsafe_from_bytes(image_url)),
-        ctx,
-    );
-    transfer::public_share_object(metadata);
-
-    let coin_info = CoinInfo<T> {
-        id: object::new(ctx),
-        name,
-        symbol,
-        image_url: url::new_unsafe_from_bytes(image_url),
-        creator: tx_context::sender(ctx),
-        launch_time: tx_context::epoch(ctx),
-        treasury_cap,
-        supply: 0,
-        reserve_balance: balance::zero(), // Initialize empty balance
-    };
-
-    let coin_address = object::uid_to_address(&coin_info.id);
-    // Emit creation event
-    event::emit(CoinCreated {
-        name,
-        symbol,
-        creator: tx_context::sender(ctx),
-        coin_address: coin_address,
-        launch_time: tx_context::epoch(ctx),
-    });
-
-    token_launcher::increment_coins_count(launchpad);
-    token_launcher::add_to_registry(registry, object::uid_to_address(&coin_info.id));
-
-    // Share the coin info object instead of returning it
-    transfer::share_object(coin_info);
-
-    // Return the address so caller knows where to find it
-    coin_address
-}
-
 // Calculate transaction fee
-public fun calculate_transaction_fee(amount: u64): u64 {
-    (amount * TRANSACTION_FEE_BPS) / BPS_DENOMINATOR
+public fun calculate_transaction_fee(amount: u64, transaction_fee_bps: u64): u64 {
+    (amount * transaction_fee_bps) / BPS_DENOMINATOR
 }
 
 // === Buy functionality ===
@@ -165,7 +90,8 @@ public fun buy_tokens_helper(
     ctx: &mut TxContext,
 ): u64 {
     let base_cost = bonding_curve::calculate_purchase_cost(supply, amount);
-    let fee = calculate_transaction_fee(base_cost);
+    let platform_fee = token_launcher::get_platform_fee(launchpad);
+    let fee = calculate_transaction_fee(base_cost, platform_fee);
     let total_cost = base_cost + fee;
 
     // Validate payment
@@ -187,6 +113,119 @@ public fun buy_tokens_helper(
     base_cost
 }
 
+// === Sell functionality ===
+public fun sell_tokens_helper(
+    launchpad: &token_launcher::Launchpad,
+    supply: u64,
+    amount: u64,
+    reserve_balance: &mut Balance<SUI>,
+    ctx: &mut TxContext,
+): (u64, u64, Coin<SUI>) {
+    // Calculate return amount
+    let return_cost = bonding_curve::calculate_sale_return(supply, amount);
+
+    // Validate reserve has enough
+    assert!(balance::value(reserve_balance) >= return_cost, E_INSUFFICIENT_BALANCE);
+
+    // Calculate fee and final return amount
+    let platform_fee = token_launcher::get_platform_fee(launchpad);
+    let fee = calculate_transaction_fee(return_cost, platform_fee);
+    let final_return_cost = return_cost - fee;
+
+    // Update supply
+    let new_supply = supply - amount;
+
+    // Take fee and return amount from reserve
+    let fee_payment = balance::split(reserve_balance, fee);
+    let return_payment = balance::split(reserve_balance, final_return_cost);
+
+    // Transfer fee to admin
+    transfer::public_transfer(
+        coin::from_balance(fee_payment, ctx),
+        token_launcher::get_admin(launchpad),
+    );
+
+    let return_coin = coin::from_balance(return_payment, ctx);
+    (new_supply, return_cost, return_coin)
+}
+
+// First we need function to create a new coin type
+public entry fun create_coin<T>(
+    launchpad: &mut token_launcher::Launchpad,
+    treasury_cap: TreasuryCap<T>,
+    registry: &mut LaunchedCoinsRegistry,
+    payment: &mut Coin<SUI>, // Added payment parameter
+    name: String,
+    symbol: String,
+    description: String,
+    website: String,
+    image_url: String,
+    ctx: &mut TxContext,
+): address {
+    // Validate inputs
+    assert!(
+        std::string::length(&name) > 0 && std::string::length(&name) <= MAX_NAME_LENGTH,
+        E_INVALID_NAME_LENGTH,
+    );
+    assert!(
+        std::string::length(&symbol) > 0 && std::string::length(&symbol) <= MAX_SYMBOL_LENGTH,
+        E_INVALID_SYMBOL_LENGTH,
+    );
+
+    // Determine fee - use custom fee if provided and >= MIN_CREATION_FEE
+    let platform_fee = token_launcher::get_platform_fee(launchpad);
+    let fee_amount = u64::max(platform_fee, MIN_CREATION_FEE);
+
+    // Validate payment
+    let payment_amount = coin::value(payment);
+    assert!(payment_amount >= fee_amount, E_INSUFFICIENT_PAYMENT);
+
+    // Take the determined fee
+    let fee = coin::split(payment, fee_amount, ctx);
+    transfer::public_transfer(fee, token_launcher::get_admin(launchpad));
+
+    // Wrap the treasury cap in the protected structure
+    let protected_cap = ProtectedTreasuryCap<T> {
+        cap: treasury_cap,
+    };
+
+    let coin_info = CoinInfo<T> {
+        id: object::new(ctx),
+        name,
+        symbol,
+        description,
+        image_url: url::new_unsafe_from_bytes(*as_bytes(&image_url)),
+        creator: tx_context::sender(ctx),
+        launch_time: tx_context::epoch(ctx),
+        protected_cap,
+        supply: 0,
+        reserve_balance: balance::zero(), // Initialize empty balance
+    };
+
+    let coin_address = object::uid_to_address(&coin_info.id);
+
+    // Emit creation event
+    event::emit(CoinCreatedEvent {
+        name,
+        symbol,
+        image_url,
+        description,
+        website,
+        creator: tx_context::sender(ctx),
+        coin_address: coin_address,
+        launch_time: tx_context::epoch(ctx),
+    });
+
+    token_launcher::increment_coins_count(launchpad);
+    token_launcher::add_to_registry(registry, object::uid_to_address(&coin_info.id));
+
+    // Share the coin info object instead of returning it
+    transfer::share_object(coin_info);
+
+    // Return the address so caller knows where to find it
+    coin_address
+}
+
 public entry fun buy_tokens<T>(
     launchpad: &token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
@@ -205,14 +244,19 @@ public entry fun buy_tokens<T>(
         ctx,
     );
 
-    // Mint new tokens
-    let treasury_cap = &mut coin_info.treasury_cap;
-    coin::mint_and_transfer(treasury_cap, amount, tx_context::sender(ctx), ctx);
+    // Extract the treasury cap for use
+    let treasury_cap = &mut coin_info.protected_cap.cap;
+
+    // Mint tokens directly using the treasury cap
+    let tokens = coin::mint(treasury_cap, amount, ctx);
+
+    // Transfer tokens to buyer
+    transfer::public_transfer(tokens, tx_context::sender(ctx));
 
     // Update supply
     coin_info.supply = coin_info.supply + amount;
 
-    event::emit(TokensPurchased {
+    event::emit(TokensPurchasedEvent {
         coin_address: object::uid_to_address(&coin_info.id),
         buyer: tx_context::sender(ctx),
         amount,
@@ -222,41 +266,6 @@ public entry fun buy_tokens<T>(
     });
 }
 
-// === Sell functionality ===
-public fun sell_tokens_helper(
-    launchpad: &token_launcher::Launchpad,
-    supply: u64,
-    amount: u64,
-    reserve_balance: &mut Balance<SUI>,
-    ctx: &mut TxContext,
-): (u64, u64, Coin<SUI>) {
-    // Calculate return amount
-    let return_amount = bonding_curve::calculate_sale_return(supply, amount);
-
-    // Validate reserve has enough
-    assert!(balance::value(reserve_balance) >= return_amount, E_INSUFFICIENT_BALANCE);
-
-    // Calculate fee and final return amount
-    let fee = calculate_transaction_fee(return_amount);
-    let final_return_amount = return_amount - fee;
-
-    // Update supply
-    let new_supply = supply - amount;
-
-    // Take fee and return amount from reserve
-    let fee_payment = balance::split(reserve_balance, fee);
-    let return_payment = balance::split(reserve_balance, final_return_amount);
-
-    // Transfer fee to admin
-    transfer::public_transfer(
-        coin::from_balance(fee_payment, ctx),
-        token_launcher::get_admin(launchpad),
-    );
-
-    let return_coin = coin::from_balance(return_payment, ctx);
-    (new_supply, return_amount, return_coin)
-}
-
 public entry fun sell_tokens<T>(
     launchpad: &token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
@@ -264,12 +273,9 @@ public entry fun sell_tokens<T>(
     ctx: &mut TxContext,
 ) {
     let amount = coin::value(&tokens);
+    coin::burn(&mut coin_info.protected_cap.cap, tokens);
 
-    // Burn the tokens
-    let treasury_cap = &mut coin_info.treasury_cap;
-    coin::burn(treasury_cap, tokens);
-
-    let (new_supply, return_amount, return_coin) = sell_tokens_helper(
+    let (new_supply, return_cost, return_coin) = sell_tokens_helper(
         launchpad,
         coin_info.supply,
         amount,
@@ -283,11 +289,11 @@ public entry fun sell_tokens<T>(
     // Update supply
     coin_info.supply = new_supply;
 
-    event::emit(TokensSold {
+    event::emit(TokensSoldEvent {
         coin_address: object::uid_to_address(&coin_info.id),
         seller: tx_context::sender(ctx),
         amount,
-        return_amount,
+        return_cost,
         new_supply: coin_info.supply,
         new_price: bonding_curve::calculate_price(coin_info.supply),
     });
