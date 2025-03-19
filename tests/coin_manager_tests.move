@@ -4,6 +4,7 @@ module wagmint::coin_manager_tests;
 use std::string::{Self, String};
 use sui::balance;
 use sui::coin::{Self, CoinMetadata, TreasuryCap};
+use sui::event;
 use sui::sui::SUI;
 use sui::test_scenario::{Self, Scenario};
 use wagmint::bonding_curve;
@@ -562,4 +563,92 @@ fun test_create_coin() {
     };
 
     test_scenario::end(scenario);
+}
+
+#[test]
+fun test_enter_contest_with_fee_success() {
+    let mut scenario = test_scenario::begin(ADMIN);
+
+    // Setup launchpad
+    scenario.next_tx(ADMIN);
+    {
+        token_launcher::create_launchpad_for_testing(scenario.ctx());
+    };
+
+    // Create a coin for the user to pay with
+    scenario.next_tx(USER);
+    {
+        let launchpad = scenario.take_shared<Launchpad>();
+        // Create coin with more than the required entry fee
+        let mut coin = coin::mint_for_testing<SUI>(100, scenario.ctx());
+
+        // Call the function being tested
+        let contest_id = string::utf8(b"test_contest_123");
+        let entry_fee = 50;
+
+        // Capture events before the call
+        let events_before = event::num_events();
+
+        coin_manager::enter_contest_with_fee(
+            &launchpad,
+            &mut coin,
+            contest_id,
+            entry_fee,
+            scenario.ctx(),
+        );
+
+        // Verify the payment was processed correctly
+        assert!(coin::value(&coin) == 50, 0); // Original 100 - fee 50 = 50 remaining
+
+        // Verify event was emitted
+        let events_after = event::num_events();
+        assert!(events_after - events_before == 1, 1);
+
+        // Get the emitted event and verify its contents
+        let emitted_event = event::events_by_type<coin_manager::ContestEnteredEvent>()[0];
+        assert!(coin_manager::get_contest_id(&emitted_event) == contest_id, 3);
+        assert!(coin_manager::get_contest_entrant(&emitted_event) == USER, 4);
+        assert!(coin_manager::get_contest_fee(&emitted_event) == entry_fee, 5);
+
+        coin::burn_for_testing(coin);
+        test_scenario::return_shared(launchpad);
+    };
+
+    // Clean up
+    scenario.end();
+}
+
+#[test]
+#[expected_failure(abort_code = coin_manager::E_INSUFFICIENT_PAYMENT)]
+fun test_enter_contest_with_insufficient_fee() {
+    let mut scenario = test_scenario::begin(ADMIN);
+
+    // Setup launchpad
+    scenario.next_tx(ADMIN);
+    {
+        token_launcher::create_launchpad_for_testing(scenario.ctx());
+    };
+
+    // Create a coin for the user to pay with
+    scenario.next_tx(USER);
+    {
+        let launchpad = scenario.take_shared<Launchpad>();
+        // Create coin with less than the required entry fee
+        let mut coin = coin::mint_for_testing<SUI>(30, scenario.ctx());
+
+        // Call the function with insufficient funds - should abort
+        coin_manager::enter_contest_with_fee(
+            &launchpad,
+            &mut coin,
+            string::utf8(b"test_contest_123"),
+            50, // Fee higher than available balance
+            scenario.ctx(),
+        );
+
+        coin::burn_for_testing(coin);
+        test_scenario::return_shared(launchpad);
+    };
+
+    // Clean up
+    scenario.end();
 }

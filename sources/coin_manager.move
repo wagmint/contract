@@ -75,6 +75,12 @@ public struct TokensSoldEvent has copy, drop {
     new_price: u64,
 }
 
+public struct ContestEnteredEvent has copy, drop {
+    contest_id: String,
+    entrant: address,
+    entry_fee: u64,
+}
+
 // Calculate transaction fee
 public fun calculate_transaction_fee(amount: u64, transaction_fee_bps: u64): u64 {
     (amount * transaction_fee_bps) / BPS_DENOMINATOR
@@ -299,6 +305,28 @@ public entry fun sell_tokens<T>(
     });
 }
 
+public entry fun enter_contest_with_fee(
+    launchpad: &token_launcher::Launchpad,
+    payment: &mut Coin<SUI>,
+    contest_id: String,
+    entry_fee_in_sui: u64,
+    ctx: &mut TxContext,
+) {
+    // Validate payment
+    assert!(coin::value(payment) >= entry_fee_in_sui, E_INSUFFICIENT_PAYMENT);
+
+    // Process payment
+    let paid = coin::split(payment, entry_fee_in_sui, ctx);
+    transfer::public_transfer(paid, token_launcher::get_admin(launchpad));
+
+    // Emit event
+    event::emit(ContestEnteredEvent {
+        contest_id,
+        entrant: tx_context::sender(ctx),
+        entry_fee: entry_fee_in_sui,
+    });
+}
+
 // View functions
 public fun get_coin_info<T>(info: &CoinInfo<T>): (String, String, Url, address, u64, u64) {
     (
@@ -370,6 +398,21 @@ public fun get_reserve_balance<T>(info: &CoinInfo<T>): &Balance<SUI> {
 #[test_only]
 public fun set_supply<T>(info: &mut CoinInfo<T>, new_supply: u64) {
     info.supply = new_supply;
+}
+
+#[test_only]
+public fun get_contest_id(event: &ContestEnteredEvent): String {
+    event.contest_id
+}
+
+#[test_only]
+public fun get_contest_entrant(event: &ContestEnteredEvent): address {
+    event.entrant
+}
+
+#[test_only]
+public fun get_contest_fee(event: &ContestEnteredEvent): u64 {
+    event.entry_fee
 }
 
 // Extracted validation logic for testing
