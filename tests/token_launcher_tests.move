@@ -32,7 +32,7 @@ fun test_init_internal(scenario: &mut Scenario) {
         assert!(token_launcher::launched_coins_count(&launchpad) == 0, 1);
         assert!(token_launcher::get_version(&launchpad) == 1, 2);
         assert!(token_launcher::get_platform_fee(&launchpad) == 100, 3);
-        assert!(token_launcher::get_creation_fee(&launchpad) == 1_000_000_000, 4);
+        assert!(token_launcher::get_creation_fee(&launchpad) == 500_000_000, 4);
         assert!(token_launcher::get_graduation_fee(&launchpad) == 0, 5);
         assert!(vector::length(&token_launcher::get_launched_coins(&registry)) == 0, 2);
 
