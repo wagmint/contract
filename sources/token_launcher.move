@@ -4,7 +4,7 @@ use sui::event;
 
 // Constants
 const PLATFORM_FEE_BPS: u64 = 100; // 1%
-const CREATION_FEE: u64 = 1_000_000_000; // 1 SUI
+const CREATION_FEE: u64 = 500_000_000; // 0.5 SUI
 const CURRENT_VERSION: u64 = 1;
 
 public struct Configuration has copy, store {

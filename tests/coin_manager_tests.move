@@ -369,14 +369,14 @@ fun test_create_coin() {
         let treasury_cap = scenario.take_from_address<TreasuryCap<TEST_COIN>>(ADMIN);
 
         // Generate 10 SUI for payment
-        let mut payment = coin::mint_for_testing<SUI>(10_000_000_000, scenario.ctx());
+        let payment = coin::mint_for_testing<SUI>(10_000_000_000, scenario.ctx());
 
         // Call the create_coin function with the test coin
         let coin_address = coin_manager::create_coin<TEST_COIN>(
             &mut launchpad,
             treasury_cap,
             &mut registry,
-            &mut payment,
+            payment,
             string::utf8(b"Test Coin"),
             string::utf8(b"TST_SYMBL"),
             string::utf8(b"A test coin for unit testing"),
@@ -388,9 +388,6 @@ fun test_create_coin() {
         // Return shared objects
         test_scenario::return_shared(launchpad);
         test_scenario::return_shared(registry);
-
-        // Return any leftover payment
-        coin::burn_for_testing(payment);
 
         // Save the coin_address for verification in next tx
         // Create a dummy object to store the address

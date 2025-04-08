@@ -1,7 +1,6 @@
 module wagmint::coin_manager;
 
 use std::string::{String, as_bytes};
-use std::u64;
 use sui::balance::{Self, Balance};
 use sui::coin::{Self, Coin, TreasuryCap};
 use sui::event;
@@ -23,7 +22,6 @@ const MAX_SYMBOL_LENGTH: u64 = 10;
 const MIN_TRADE_AMOUNT: u64 = 1;
 
 // Constants
-const MIN_CREATION_FEE: u64 = 500_000_000; // 0.5 SUI
 const BPS_DENOMINATOR: u64 = 10000;
 
 // Protected version of the treasury cap
@@ -160,7 +158,7 @@ public entry fun create_coin<T>(
     launchpad: &mut token_launcher::Launchpad,
     treasury_cap: TreasuryCap<T>,
     registry: &mut LaunchedCoinsRegistry,
-    payment: &mut Coin<SUI>, // Added payment parameter
+    mut payment: Coin<SUI>, // Added payment parameter
     name: String,
     symbol: String,
     description: String,
@@ -178,17 +176,22 @@ public entry fun create_coin<T>(
         E_INVALID_SYMBOL_LENGTH,
     );
 
-    // Determine fee - use custom fee if provided and >= MIN_CREATION_FEE
-    let platform_fee = token_launcher::get_platform_fee(launchpad);
-    let fee_amount = u64::max(platform_fee, MIN_CREATION_FEE);
+    // Determine fee
+    let creation_fee = token_launcher::get_creation_fee(launchpad);
 
     // Validate payment
-    let payment_amount = coin::value(payment);
-    assert!(payment_amount >= fee_amount, E_INSUFFICIENT_PAYMENT);
+    let payment_amount = coin::value(&payment);
+    assert!(payment_amount >= creation_fee, E_INSUFFICIENT_PAYMENT);
 
-    // Take the determined fee
-    let fee = coin::split(payment, fee_amount, ctx);
-    transfer::public_transfer(fee, token_launcher::get_admin(launchpad));
+    // Take the fee and return change if necessary
+    if (payment_amount > creation_fee) {
+        // Return excess payment to sender
+        let remainder = coin::split(&mut payment, payment_amount - creation_fee, ctx);
+        transfer::public_transfer(remainder, tx_context::sender(ctx));
+    };
+
+    // Transfer the fee
+    transfer::public_transfer(payment, token_launcher::get_admin(launchpad));
 
     // Wrap the treasury cap in the protected structure
     let protected_cap = ProtectedTreasuryCap<T> {
