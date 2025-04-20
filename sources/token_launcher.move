@@ -4,14 +4,23 @@ use sui::event;
 
 // Constants
 const PLATFORM_FEE_BPS: u64 = 100; // 1%
-const CREATION_FEE: u64 = 500_000_000; // 0.5 SUI
+const CREATION_FEE: u64 = 10_000_000; // 0.01 SUI
+const GRADUATION_FEE: u64 = 6_000_000_000; // 6 SUI
 const CURRENT_VERSION: u64 = 1;
+
+// Default virtual reserves
+const DEFAULT_INITIAL_VIRTUAL_SUI: u64 = 500_000_000_000; // 500 SUI with 9 decimals (500 * 10^9)
+const DEFAULT_INITIAL_VIRTUAL_TOKENS: u64 = 1_000_000_000_000_000_000; // 1 billion tokens with 9 decimals (10^9 * 10^9)
+const DEFAULT_TOKEN_DECIMALS: u8 = 9;
 
 public struct Configuration has copy, store {
     version: u64,
     platform_fee: u64,
     creation_fee: u64,
     graduation_fee: u64,
+    initial_virtual_sui: u64,
+    initial_virtual_tokens: u64,
+    token_decimals: u8,
 }
 
 public struct Launchpad has key, store {
@@ -28,6 +37,9 @@ public struct LaunchedCoinsRegistry has key {
 
 public struct LaunchpadInitializedEvent has copy, drop {
     admin: address,
+    initial_virtual_sui: u64,
+    initial_virtual_tokens: u64,
+    token_decimals: u8,
 }
 
 public struct ConfigurationUpdatedEvent has copy, drop {
@@ -35,10 +47,16 @@ public struct ConfigurationUpdatedEvent has copy, drop {
     old_platform_fee: u64,
     old_creation_fee: u64,
     old_graduation_fee: u64,
+    old_initial_virtual_sui: u64,
+    old_initial_virtual_tokens: u64,
+    old_token_decimals: u8,
     new_version: u64,
     new_platform_fee: u64,
     new_creation_fee: u64,
     new_graduation_fee: u64,
+    new_initial_virtual_sui: u64,
+    new_initial_virtual_tokens: u64,
+    new_token_decimals: u8,
 }
 
 const E_NOT_ADMIN: u64 = 0;
@@ -48,8 +66,15 @@ fun init(ctx: &mut TxContext) {
         version: CURRENT_VERSION,
         platform_fee: PLATFORM_FEE_BPS,
         creation_fee: CREATION_FEE,
-        graduation_fee: 0,
+        graduation_fee: GRADUATION_FEE,
+        initial_virtual_sui: DEFAULT_INITIAL_VIRTUAL_SUI,
+        initial_virtual_tokens: DEFAULT_INITIAL_VIRTUAL_TOKENS,
+        token_decimals: DEFAULT_TOKEN_DECIMALS,
     };
+
+    let initial_virtual_sui = config.initial_virtual_sui;
+    let initial_virtual_tokens = config.initial_virtual_tokens;
+    let token_decimals = config.token_decimals;
 
     let launchpad = Launchpad {
         id: object::new(ctx),
@@ -66,6 +91,9 @@ fun init(ctx: &mut TxContext) {
     // Emit an event when launchpad is initialized
     event::emit(LaunchpadInitializedEvent {
         admin: tx_context::sender(ctx),
+        initial_virtual_sui: initial_virtual_sui,
+        initial_virtual_tokens: initial_virtual_tokens,
+        token_decimals: token_decimals,
     });
 
     transfer::public_share_object(launchpad);
@@ -87,29 +115,45 @@ public entry fun update_launchpad_config(
     platform_fee: u64,
     creation_fee: u64,
     graduation_fee: u64,
+    initial_virtual_sui: u64,
+    initial_virtual_tokens: u64,
+    token_decimals: u8,
     ctx: &mut TxContext,
 ) {
     assert!(lp.admin == tx_context::sender(ctx), E_NOT_ADMIN);
+
     let old_version = lp.config.version;
     let old_platform_fee = lp.config.platform_fee;
     let old_creation_fee = lp.config.creation_fee;
     let old_graduation_fee = lp.config.graduation_fee;
+    let old_initial_virtual_sui = lp.config.initial_virtual_sui;
+    let old_initial_virtual_tokens = lp.config.initial_virtual_tokens;
+    let old_token_decimals = lp.config.token_decimals;
 
     lp.config.version = version;
     lp.config.platform_fee = platform_fee;
     lp.config.creation_fee = creation_fee;
     lp.config.graduation_fee = graduation_fee;
+    lp.config.initial_virtual_sui = initial_virtual_sui;
+    lp.config.initial_virtual_tokens = initial_virtual_tokens;
+    lp.config.token_decimals = token_decimals;
 
     // Emit an event when launchpad config is updated
     event::emit(ConfigurationUpdatedEvent {
-        old_version: old_version,
-        old_platform_fee: old_platform_fee,
-        old_creation_fee: old_creation_fee,
-        old_graduation_fee: old_graduation_fee,
+        old_version,
+        old_platform_fee,
+        old_creation_fee,
+        old_graduation_fee,
+        old_initial_virtual_sui,
+        old_initial_virtual_tokens,
+        old_token_decimals,
         new_version: version,
         new_platform_fee: platform_fee,
         new_creation_fee: creation_fee,
         new_graduation_fee: graduation_fee,
+        new_initial_virtual_sui: initial_virtual_sui,
+        new_initial_virtual_tokens: initial_virtual_tokens,
+        new_token_decimals: token_decimals,
     });
 }
 
@@ -122,7 +166,7 @@ public fun add_to_registry(registry: &mut LaunchedCoinsRegistry, coin_address: a
 }
 
 // === View Functions ===
-public fun launched_coins_count(launchpad: &Launchpad): u64 {
+public fun get_launched_coins_count(launchpad: &Launchpad): u64 {
     launchpad.launched_coins_count
 }
 
@@ -148,6 +192,18 @@ public fun get_creation_fee(launchpad: &Launchpad): u64 {
 
 public fun get_graduation_fee(launchpad: &Launchpad): u64 {
     launchpad.config.graduation_fee
+}
+
+public fun get_initial_virtual_sui(launchpad: &Launchpad): u64 {
+    launchpad.config.initial_virtual_sui
+}
+
+public fun get_initial_virtual_tokens(launchpad: &Launchpad): u64 {
+    launchpad.config.initial_virtual_tokens
+}
+
+public fun get_token_decimals(launchpad: &Launchpad): u8 {
+    launchpad.config.token_decimals
 }
 
 public fun get_version(launchpad: &Launchpad): u64 {

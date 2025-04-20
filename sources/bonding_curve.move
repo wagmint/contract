@@ -1,49 +1,107 @@
 module wagmint::bonding_curve;
 
+use wagmint::token_launcher::{Self, Launchpad};
 use wagmint::utils;
 
 // Error codes
 const E_ZERO_SUPPLY: u64 = 0;
 
-// Constants for price calculation
-const PRICE_COEFFICIENT: u64 = 2000000; // 2 * 10^6
+// Calculate the constant product K
+public fun calculate_constant_product(initial_virtual_sui: u64, initial_virtual_tokens: u64): u128 {
+    utils::mul(
+        utils::from_u64(initial_virtual_sui),
+        utils::from_u64(initial_virtual_tokens),
+    )
+}
 
-public fun calculate_price(supply: u64): u64 {
-    // Price = supply² / PRICE_COEFFICIENT
-    let supply_squared = utils::pow(utils::from_u64(supply), 2);
+// Calculate token price at current supply based on virtual reserves
+public fun calculate_price(virtual_sui_reserves: u64, virtual_token_reserves: u64): u64 {
+    // Calculate price using derivative of constant product formula: price = virtual_sui / virtual_token
+    // This is effectively the spot price at the current point on the curve
+    if (virtual_token_reserves == 0) {
+        return 0
+    };
+
     utils::as_u64(
         utils::div(
-            supply_squared,
-            utils::from_u64(PRICE_COEFFICIENT),
+            utils::from_u64(virtual_sui_reserves),
+            utils::from_u64(virtual_token_reserves),
         ),
     )
 }
 
-public fun calculate_purchase_cost(current_supply: u64, amount: u64): u64 {
-    let new_supply = current_supply + amount;
+// Calculate the amount of tokens to mint when given SUI (buying tokens)
+public fun calculate_tokens_to_mint(
+    virtual_sui_reserves: u64,
+    virtual_token_reserves: u64,
+    sui_amount: u64,
+): u64 {
+    // Following movepump's approach more closely:
+    // tokens_to_mint = virtual_token_reserves - (virtual_sui_reserves * virtual_token_reserves) / (virtual_sui_reserves + sui_amount)
 
-    let new_supply_cubed = utils::pow(utils::from_u64(new_supply), 3);
-    let current_supply_cubed = utils::pow(utils::from_u64(current_supply), 3);
+    let k = utils::mul(
+        utils::from_u64(virtual_sui_reserves),
+        utils::from_u64(virtual_token_reserves),
+    );
+
+    let new_virtual_sui = utils::add(
+        utils::from_u64(virtual_sui_reserves),
+        utils::from_u64(sui_amount),
+    );
+
+    let new_virtual_tokens = utils::div(k, new_virtual_sui);
 
     utils::as_u64(
-        utils::div(
-            utils::sub(new_supply_cubed, current_supply_cubed),
-            utils::mul(3, utils::from_u64(PRICE_COEFFICIENT)),
+        utils::sub(
+            utils::from_u64(virtual_token_reserves),
+            new_virtual_tokens,
         ),
     )
 }
 
-public fun calculate_sale_return(current_supply: u64, amount: u64): u64 {
-    assert!(current_supply >= amount, E_ZERO_SUPPLY);
-    let new_supply = utils::sub(utils::from_u64(current_supply), utils::from_u64(amount));
+// Calculate SUI to return when selling tokens
+public fun calculate_sale_return(
+    virtual_sui_reserves: u64,
+    virtual_token_reserves: u64,
+    token_amount: u64,
+): u64 {
+    // Make sure we have enough token reserves
+    assert!(virtual_token_reserves >= token_amount, E_ZERO_SUPPLY);
 
-    let current_supply_cubed = utils::pow(utils::from_u64(current_supply), 3);
-    let new_supply_cubed = utils::pow(new_supply, 3);
+    // Following movepump's approach more closely:
+    // sui_to_return = virtual_sui_reserves - (virtual_sui_reserves * virtual_token_reserves) / (virtual_token_reserves + token_amount)
+
+    let new_virtual_tokens = utils::add(
+        utils::from_u64(virtual_token_reserves),
+        utils::from_u64(token_amount),
+    );
+
+    let k = utils::mul(
+        utils::from_u64(virtual_sui_reserves),
+        utils::from_u64(virtual_token_reserves),
+    );
+
+    let new_virtual_sui = utils::div(k, new_virtual_tokens);
 
     utils::as_u64(
-        utils::div(
-            utils::sub(current_supply_cubed, new_supply_cubed),
-            utils::mul(3, utils::from_u64(PRICE_COEFFICIENT)),
+        utils::sub(
+            utils::from_u64(virtual_sui_reserves),
+            new_virtual_sui,
         ),
     )
+}
+
+// Check if token has reached graduation threshold
+public fun has_reached_graduation_threshold(
+    virtual_sui_reserves: u64,
+    graduation_threshold: u64,
+): bool {
+    virtual_sui_reserves >= graduation_threshold
+}
+
+// Get graduation threshold from launchpad config
+public fun get_graduation_threshold(launchpad: &Launchpad): u64 {
+    // By default, graduation threshold is about 2.3x the initial virtual SUI
+    let initial_virtual_sui = token_launcher::get_initial_virtual_sui(launchpad);
+    utils::as_u64(utils::mul(utils::from_u64(initial_virtual_sui), utils::from_u64(23)) / 10)
 }
