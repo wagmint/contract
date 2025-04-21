@@ -15,6 +15,7 @@ const E_INVALID_SYMBOL_LENGTH: u64 = 1;
 const E_INSUFFICIENT_PAYMENT: u64 = 2;
 const E_INSUFFICIENT_BALANCE: u64 = 3;
 const E_AMOUNT_TOO_SMALL: u64 = 4;
+const E_ALREADY_GRADUATED: u64 = 6;
 
 // Constants for validation
 const MAX_NAME_LENGTH: u64 = 32;
@@ -39,8 +40,16 @@ public struct CoinInfo<phantom T> has key, store {
     creator: address,
     launch_time: u64,
     protected_cap: ProtectedTreasuryCap<T>,
-    supply: u64, // Track supply for bonding curve
-    reserve_balance: Balance<SUI>, // Track reserve balance
+    // Real reserves - actual tokens and SUI
+    real_token_reserves: Balance<T>, // Tokens held by the bonding curve
+    real_sui_reserves: Balance<SUI>, // Actual SUI reserves
+    // Virtual reserves - for price calculation
+    virtual_token_reserves: u64, // Virtual tokens for curve calculation
+    virtual_sui_reserves: u64, // Virtual SUI for curve calculation
+    // Token metadata
+    token_decimals: u8, // Decimal places for the token
+    graduated: bool, // Has token graduated to DEX?
+    supply: u64, // Total supply in circulation
 }
 
 // Events
@@ -53,31 +62,30 @@ public struct CoinCreatedEvent has copy, drop {
     creator: address,
     coin_address: address,
     launch_time: u64,
+    virtual_sui_reserves: u64,
+    virtual_token_reserves: u64,
+    token_decimals: u8,
 }
 
-public struct TokensPurchasedEvent has copy, drop {
+public struct TradeEvent has copy, drop {
+    is_buy: bool,
     coin_address: address,
-    buyer: address,
-    amount: u64,
-    cost: u64,
+    user_address: address,
+    token_amount: u64,
+    sui_amount: u64,
     new_supply: u64,
     new_price: u64,
+    virtual_sui_reserves: u64,
+    virtual_token_reserves: u64,
 }
 
-public struct TokensSoldEvent has copy, drop {
-    coin_address: address,
-    seller: address,
-    amount: u64,
-    return_cost: u64,
-    new_supply: u64,
-    new_price: u64,
-}
-
-public struct ContestEnteredEvent has copy, drop {
-    contest_id: String,
-    entrant: address,
-    entry_fee: u64,
-}
+// public struct TokenGraduatedEvent has copy, drop {
+//     coin_address: address,
+//     supply: u64,
+//     sui_reserves: u64,
+//     virtual_sui_reserves: u64,
+//     virtual_token_reserves: u64,
+// }
 
 // Calculate transaction fee
 public fun calculate_transaction_fee(amount: u64, transaction_fee_bps: u64): u64 {
@@ -85,18 +93,27 @@ public fun calculate_transaction_fee(amount: u64, transaction_fee_bps: u64): u64
 }
 
 // === Buy functionality ===
-public fun buy_tokens_helper(
+public fun buy_tokens_helper<T>(
     launchpad: &token_launcher::Launchpad,
-    supply: u64,
-    amount: u64,
+    coin_info: &mut CoinInfo<T>,
     payment: &mut Coin<SUI>,
-    reserve_balance: &mut Balance<SUI>,
+    amount: u64,
     ctx: &mut TxContext,
 ): u64 {
-    let base_cost = bonding_curve::calculate_purchase_cost(supply, amount);
+    // Ensure the token hasn't graduated yet
+    assert!(!coin_info.graduated, E_ALREADY_GRADUATED);
+
+    // Calculate tokens to mint based on the constant product formula
+    let tokens_to_mint = bonding_curve::calculate_tokens_to_mint(
+        coin_info.virtual_sui_reserves,
+        coin_info.virtual_token_reserves,
+        amount,
+    );
+
+    // Calculate the fee
     let platform_fee = token_launcher::get_platform_fee(launchpad);
-    let fee = calculate_transaction_fee(base_cost, platform_fee);
-    let total_cost = base_cost + fee;
+    let fee = calculate_transaction_fee(amount, platform_fee);
+    let total_cost = amount + fee;
 
     // Validate payment
     assert!(coin::value(payment) >= total_cost, E_INSUFFICIENT_PAYMENT);
@@ -112,36 +129,57 @@ public fun buy_tokens_helper(
         token_launcher::get_admin(launchpad),
     );
 
-    // Add remaining to reserve
-    balance::join(reserve_balance, paid_balance);
-    base_cost
+    // Add remaining to real reserve
+    balance::join(&mut coin_info.real_sui_reserves, paid_balance);
+
+    // Update virtual reserves
+    coin_info.virtual_sui_reserves = coin_info.virtual_sui_reserves + amount;
+    coin_info.virtual_token_reserves = coin_info.virtual_token_reserves - tokens_to_mint;
+
+    // Check for graduation
+    // if (
+    //     bonding_curve::has_reached_graduation_threshold(
+    //         coin_info.virtual_sui_reserves,
+    //         bonding_curve::get_graduation_threshold(launchpad),
+    //     )
+    // ) {
+    //     graduate_token(coin_info, ctx);
+    // };
+    tokens_to_mint
 }
 
 // === Sell functionality ===
-public fun sell_tokens_helper(
+public fun sell_tokens_helper<T>(
     launchpad: &token_launcher::Launchpad,
-    supply: u64,
+    coin_info: &mut CoinInfo<T>,
     amount: u64,
-    reserve_balance: &mut Balance<SUI>,
     ctx: &mut TxContext,
-): (u64, u64, Coin<SUI>) {
-    // Calculate return amount
-    let return_cost = bonding_curve::calculate_sale_return(supply, amount);
+): (u64, Coin<SUI>) {
+    // Ensure the token hasn't graduated yet
+    assert!(!coin_info.graduated, E_ALREADY_GRADUATED);
+
+    // Calculate return amount using bonding curve
+    let return_cost = bonding_curve::calculate_sale_return(
+        coin_info.virtual_sui_reserves,
+        coin_info.virtual_token_reserves,
+        amount,
+    );
 
     // Validate reserve has enough
-    assert!(balance::value(reserve_balance) >= return_cost, E_INSUFFICIENT_BALANCE);
+    assert!(balance::value(&coin_info.real_sui_reserves) >= return_cost, E_INSUFFICIENT_BALANCE);
 
     // Calculate fee and final return amount
     let platform_fee = token_launcher::get_platform_fee(launchpad);
     let fee = calculate_transaction_fee(return_cost, platform_fee);
     let final_return_cost = return_cost - fee;
 
-    // Update supply
-    let new_supply = supply - amount;
+    // Update virtual reserves
+    coin_info.virtual_sui_reserves = coin_info.virtual_sui_reserves - return_cost;
+    coin_info.virtual_token_reserves = coin_info.virtual_token_reserves + amount;
 
     // Take fee and return amount from reserve
-    let fee_payment = balance::split(reserve_balance, fee);
-    let return_payment = balance::split(reserve_balance, final_return_cost);
+    let fee_payment = balance::split(&mut coin_info.real_sui_reserves, fee);
+    let return_payment = balance::split(&mut coin_info.real_sui_reserves, final_return_cost);
 
     // Transfer fee to admin
     transfer::public_transfer(
@@ -150,15 +188,32 @@ public fun sell_tokens_helper(
     );
 
     let return_coin = coin::from_balance(return_payment, ctx);
-    (new_supply, return_cost, return_coin)
+    (return_cost, return_coin)
 }
+
+// Graduate token to DEX
+// fun graduate_token<T>(coin_info: &mut CoinInfo<T>, ctx: &mut TxContext) {
+//     // Only graduate once
+//     if (!coin_info.graduated) {
+//         coin_info.graduated = true;
+
+//         // Emit graduation event
+//         event::emit(TokenGraduatedEvent {
+//             coin_address: object::uid_to_address(&coin_info.id),
+//             supply: coin_info.supply,
+//             sui_reserves: balance::value(&coin_info.real_sui_reserves),
+//             virtual_sui_reserves: coin_info.virtual_sui_reserves,
+//             virtual_token_reserves: coin_info.virtual_token_reserves,
+//         });
+//     }
+// }
 
 // First we need function to create a new coin type
 public entry fun create_coin<T>(
     launchpad: &mut token_launcher::Launchpad,
     treasury_cap: TreasuryCap<T>,
     registry: &mut LaunchedCoinsRegistry,
-    mut payment: Coin<SUI>, // Added payment parameter
+    mut payment: Coin<SUI>,
     name: String,
     symbol: String,
     description: String,
@@ -194,9 +249,22 @@ public entry fun create_coin<T>(
     transfer::public_transfer(payment, token_launcher::get_admin(launchpad));
 
     // Wrap the treasury cap in the protected structure
-    let protected_cap = ProtectedTreasuryCap<T> {
+    let mut protected_cap = ProtectedTreasuryCap<T> {
         cap: treasury_cap,
     };
+
+    // Get initial virtual reserves from launchpad config
+    let initial_virtual_sui = token_launcher::get_initial_virtual_sui(launchpad);
+    let initial_virtual_tokens = token_launcher::get_initial_virtual_tokens(launchpad);
+    let token_decimals = token_launcher::get_token_decimals(launchpad);
+
+    // Mint actual tokens for initial distribution (all tokens are held by the bonding curve)
+    let minted_tokens = coin::mint(
+        &mut protected_cap.cap,
+        initial_virtual_tokens,
+        ctx,
+    );
+    let minted_balance = coin::into_balance(minted_tokens);
 
     let coin_info = CoinInfo<T> {
         id: object::new(ctx),
@@ -207,8 +275,14 @@ public entry fun create_coin<T>(
         creator: tx_context::sender(ctx),
         launch_time: tx_context::epoch(ctx),
         protected_cap,
-        supply: 0,
-        reserve_balance: balance::zero(), // Initialize empty balance
+        // Initial token allocation
+        real_token_reserves: minted_balance,
+        real_sui_reserves: balance::zero(),
+        virtual_token_reserves: initial_virtual_tokens,
+        virtual_sui_reserves: initial_virtual_sui,
+        token_decimals,
+        graduated: false,
+        supply: 0, // No tokens in circulation yet
     };
 
     let coin_address = object::uid_to_address(&coin_info.id);
@@ -221,14 +295,17 @@ public entry fun create_coin<T>(
         description,
         website,
         creator: tx_context::sender(ctx),
-        coin_address: coin_address,
+        coin_address,
         launch_time: tx_context::epoch(ctx),
+        virtual_sui_reserves: coin_info.virtual_sui_reserves,
+        virtual_token_reserves: coin_info.virtual_token_reserves,
+        token_decimals,
     });
 
     token_launcher::increment_coins_count(launchpad);
-    token_launcher::add_to_registry(registry, object::uid_to_address(&coin_info.id));
+    token_launcher::add_to_registry(registry, coin_address);
 
-    // Share the coin info object instead of returning it
+    // Share the coin info object
     transfer::share_object(coin_info);
 
     // Return the address so caller knows where to find it
@@ -239,39 +316,51 @@ public entry fun buy_tokens<T>(
     launchpad: &token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
     payment: &mut Coin<SUI>,
-    amount: u64,
+    sui_amount: u64,
     ctx: &mut TxContext,
 ) {
     // Validate amount
-    assert!(amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
-    let cost = buy_tokens_helper(
+    assert!(sui_amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
+
+    // Use the bonding curve to calculate tokens and process payment
+    let tokens_to_mint = buy_tokens_helper(
         launchpad,
-        coin_info.supply,
-        amount,
+        coin_info,
         payment,
-        &mut coin_info.reserve_balance,
+        sui_amount,
         ctx,
     );
 
-    // Extract the treasury cap for use
-    let treasury_cap = &mut coin_info.protected_cap.cap;
-
-    // Mint tokens directly using the treasury cap
-    let tokens = coin::mint(treasury_cap, amount, ctx);
+    // Take tokens from real reserves
+    let tokens = coin::take(
+        &mut coin_info.real_token_reserves,
+        tokens_to_mint,
+        ctx,
+    );
 
     // Transfer tokens to buyer
     transfer::public_transfer(tokens, tx_context::sender(ctx));
 
     // Update supply
-    coin_info.supply = coin_info.supply + amount;
+    coin_info.supply = coin_info.supply + tokens_to_mint;
 
-    event::emit(TokensPurchasedEvent {
+    // Calculate new price
+    let new_price = bonding_curve::calculate_price(
+        coin_info.virtual_sui_reserves,
+        coin_info.virtual_token_reserves,
+    );
+
+    // Emit purchase event
+    event::emit(TradeEvent {
+        is_buy: true,
         coin_address: object::uid_to_address(&coin_info.id),
-        buyer: tx_context::sender(ctx),
-        amount,
-        cost,
+        user_address: tx_context::sender(ctx),
+        token_amount: tokens_to_mint,
+        sui_amount: sui_amount,
         new_supply: coin_info.supply,
-        new_price: bonding_curve::calculate_price(coin_info.supply),
+        new_price,
+        virtual_sui_reserves: coin_info.virtual_sui_reserves,
+        virtual_token_reserves: coin_info.virtual_token_reserves,
     });
 }
 
@@ -281,52 +370,42 @@ public entry fun sell_tokens<T>(
     tokens: Coin<T>,
     ctx: &mut TxContext,
 ) {
-    let amount = coin::value(&tokens);
-    coin::burn(&mut coin_info.protected_cap.cap, tokens);
+    let token_amount = coin::value(&tokens);
 
-    let (new_supply, return_cost, return_coin) = sell_tokens_helper(
+    // Process the sell operation using bonding curve
+    let (sui_amount, return_coin) = sell_tokens_helper(
         launchpad,
-        coin_info.supply,
-        amount,
-        &mut coin_info.reserve_balance,
+        coin_info,
+        token_amount,
         ctx,
     );
+
+    // Update supply (decrease)
+    coin_info.supply = coin_info.supply - token_amount;
+
+    // Burn the tokens
+    coin::burn(&mut coin_info.protected_cap.cap, tokens);
 
     // Transfer return amount to seller
     transfer::public_transfer(return_coin, tx_context::sender(ctx));
 
-    // Update supply
-    coin_info.supply = new_supply;
+    // Calculate new price
+    let new_price = bonding_curve::calculate_price(
+        coin_info.virtual_sui_reserves,
+        coin_info.virtual_token_reserves,
+    );
 
-    event::emit(TokensSoldEvent {
+    // Emit sell event
+    event::emit(TradeEvent {
+        is_buy: false,
         coin_address: object::uid_to_address(&coin_info.id),
-        seller: tx_context::sender(ctx),
-        amount,
-        return_cost,
+        user_address: tx_context::sender(ctx),
+        token_amount: token_amount,
+        sui_amount: sui_amount,
         new_supply: coin_info.supply,
-        new_price: bonding_curve::calculate_price(coin_info.supply),
-    });
-}
-
-public entry fun enter_contest_with_fee(
-    launchpad: &token_launcher::Launchpad,
-    payment: &mut Coin<SUI>,
-    contest_id: String,
-    entry_fee_in_sui: u64,
-    ctx: &mut TxContext,
-) {
-    // Validate payment
-    assert!(coin::value(payment) >= entry_fee_in_sui, E_INSUFFICIENT_PAYMENT);
-
-    // Process payment
-    let paid = coin::split(payment, entry_fee_in_sui, ctx);
-    transfer::public_transfer(paid, token_launcher::get_admin(launchpad));
-
-    // Emit event
-    event::emit(ContestEnteredEvent {
-        contest_id,
-        entrant: tx_context::sender(ctx),
-        entry_fee: entry_fee_in_sui,
+        new_price,
+        virtual_sui_reserves: coin_info.virtual_sui_reserves,
+        virtual_token_reserves: coin_info.virtual_token_reserves,
     });
 }
 
@@ -338,23 +417,26 @@ public fun get_coin_info<T>(info: &CoinInfo<T>): (String, String, Url, address, 
         info.image_url,
         info.creator,
         info.supply,
-        balance::value(&info.reserve_balance),
+        balance::value(&info.real_sui_reserves),
     )
 }
 
 // Get current spot price of the coin
 public fun get_current_price<T>(coin_info: &CoinInfo<T>): u64 {
-    bonding_curve::calculate_price(coin_info.supply)
+    bonding_curve::calculate_price(
+        coin_info.virtual_sui_reserves,
+        coin_info.virtual_token_reserves,
+    )
 }
 
-// Get cost to buy specific amount
-public fun get_purchase_cost<T>(coin_info: &CoinInfo<T>, amount: u64): u64 {
-    bonding_curve::calculate_purchase_cost(coin_info.supply, amount)
-}
+// Calculate market cap
+public fun calculate_market_cap<T>(coin_info: &CoinInfo<T>): u64 {
+    let price = get_current_price(coin_info);
+    let total_tokens = coin_info.virtual_token_reserves;
+    let fully_diluted_market_cap = price * total_tokens;
 
-// Get return amount for selling specific amount
-public fun get_sale_return<T>(coin_info: &CoinInfo<T>, amount: u64): u64 {
-    bonding_curve::calculate_sale_return(coin_info.supply, amount)
+    // Return the fully diluted market cap (like pump.fun)
+    fully_diluted_market_cap
 }
 
 // Get just the supply
@@ -362,9 +444,34 @@ public fun get_supply<T>(info: &CoinInfo<T>): u64 {
     info.supply
 }
 
-// Get just the reserve balance
-public fun get_reserve<T>(info: &CoinInfo<T>): u64 {
-    balance::value(&info.reserve_balance)
+// Get just the real reserve balance
+public fun get_real_sui_reserves<T>(info: &CoinInfo<T>): u64 {
+    balance::value(&info.real_sui_reserves)
+}
+
+// Get real token reserves
+public fun get_real_token_reserves<T>(info: &CoinInfo<T>): u64 {
+    balance::value(&info.real_token_reserves)
+}
+
+// Get virtual SUI reserves
+public fun get_virtual_sui_reserves<T>(info: &CoinInfo<T>): u64 {
+    info.virtual_sui_reserves
+}
+
+// Get virtual token reserves
+public fun get_virtual_token_reserves<T>(info: &CoinInfo<T>): u64 {
+    info.virtual_token_reserves
+}
+
+// Get token decimals
+public fun get_token_decimals<T>(info: &CoinInfo<T>): u8 {
+    info.token_decimals
+}
+
+// Check if token has graduated
+public fun has_graduated<T>(info: &CoinInfo<T>): bool {
+    info.graduated
 }
 
 // Get creator address
@@ -390,32 +497,6 @@ public fun get_name<T>(info: &CoinInfo<T>): String {
 // Get image URL
 public fun get_image_url<T>(info: &CoinInfo<T>): Url {
     info.image_url
-}
-
-// Get reserve balance
-public fun get_reserve_balance<T>(info: &CoinInfo<T>): &Balance<SUI> {
-    &info.reserve_balance
-}
-
-// Set supply, only for testing
-#[test_only]
-public fun set_supply<T>(info: &mut CoinInfo<T>, new_supply: u64) {
-    info.supply = new_supply;
-}
-
-#[test_only]
-public fun get_contest_id(event: &ContestEnteredEvent): String {
-    event.contest_id
-}
-
-#[test_only]
-public fun get_contest_entrant(event: &ContestEnteredEvent): address {
-    event.entrant
-}
-
-#[test_only]
-public fun get_contest_fee(event: &ContestEnteredEvent): u64 {
-    event.entry_fee
 }
 
 // Extracted validation logic for testing
