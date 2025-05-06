@@ -75,8 +75,8 @@ public struct TradeEvent has copy, drop {
     sui_amount: u64,
     new_supply: u64,
     new_price: u64,
-    virtual_sui_reserves: u64,
-    virtual_token_reserves: u64,
+    new_virtual_sui_reserves: u64,
+    new_virtual_token_reserves: u64,
 }
 
 // public struct TokenGraduatedEvent has copy, drop {
@@ -359,8 +359,8 @@ public entry fun buy_tokens<T>(
         sui_amount: sui_amount,
         new_supply: coin_info.supply,
         new_price,
-        virtual_sui_reserves: coin_info.virtual_sui_reserves,
-        virtual_token_reserves: coin_info.virtual_token_reserves,
+        new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
+        new_virtual_token_reserves: coin_info.virtual_token_reserves,
     });
 }
 
@@ -404,8 +404,8 @@ public entry fun sell_tokens<T>(
         sui_amount: sui_amount,
         new_supply: coin_info.supply,
         new_price,
-        virtual_sui_reserves: coin_info.virtual_sui_reserves,
-        virtual_token_reserves: coin_info.virtual_token_reserves,
+        new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
+        new_virtual_token_reserves: coin_info.virtual_token_reserves,
     });
 }
 

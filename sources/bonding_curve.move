@@ -36,9 +36,6 @@ public fun calculate_tokens_to_mint(
     virtual_token_reserves: u64,
     sui_amount: u64,
 ): u64 {
-    // Following movepump's approach more closely:
-    // tokens_to_mint = virtual_token_reserves - (virtual_sui_reserves * virtual_token_reserves) / (virtual_sui_reserves + sui_amount)
-
     let k = utils::mul(
         utils::from_u64(virtual_sui_reserves),
         utils::from_u64(virtual_token_reserves),
@@ -67,9 +64,6 @@ public fun calculate_sale_return(
 ): u64 {
     // Make sure we have enough token reserves
     assert!(virtual_token_reserves >= token_amount, E_ZERO_SUPPLY);
-
-    // Following movepump's approach more closely:
-    // sui_to_return = virtual_sui_reserves - (virtual_sui_reserves * virtual_token_reserves) / (virtual_token_reserves + token_amount)
 
     let new_virtual_tokens = utils::add(
         utils::from_u64(virtual_token_reserves),
