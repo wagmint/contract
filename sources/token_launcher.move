@@ -5,13 +5,13 @@ use sui::event;
 // Constants
 const PLATFORM_FEE_BPS: u64 = 100; // 1%
 const CREATION_FEE: u64 = 10_000_000; // 0.01 SUI
-const GRADUATION_FEE: u64 = 6_000_000_000; // 6 SUI
+const GRADUATION_FEE: u64 = 300_000_000_000; // 300 SUI
 const CURRENT_VERSION: u64 = 1;
 
 // Default virtual reserves
-const DEFAULT_INITIAL_VIRTUAL_SUI: u64 = 500_000_000_000; // 500 SUI with 9 decimals (500 * 10^9)
-const DEFAULT_INITIAL_VIRTUAL_TOKENS: u64 = 1_000_000_000_000_000_000; // 1 billion tokens with 9 decimals (10^9 * 10^9)
-const DEFAULT_TOKEN_DECIMALS: u8 = 9;
+const DEFAULT_INITIAL_VIRTUAL_SUI: u64 = 2_500_000_000_000; // 2500 SUI
+const DEFAULT_INITIAL_VIRTUAL_TOKENS: u64 = 1_000_000_000_000_000; // 1B SUI
+const DEFAULT_TOKEN_DECIMALS: u8 = 6;
 
 public struct Configuration has copy, store {
     version: u64,
