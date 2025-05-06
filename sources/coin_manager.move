@@ -79,6 +79,14 @@ public struct TradeEvent has copy, drop {
     new_virtual_token_reserves: u64,
 }
 
+// public struct TokenGraduatedEvent has copy, drop {
+//     coin_address: address,
+//     supply: u64,
+//     sui_reserves: u64,
+//     virtual_sui_reserves: u64,
+//     virtual_token_reserves: u64,
+// }
+
 // Calculate transaction fee
 public fun calculate_transaction_fee(amount: u64, transaction_fee_bps: u64): u64 {
     (amount * transaction_fee_bps) / BPS_DENOMINATOR
