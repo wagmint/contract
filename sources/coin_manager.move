@@ -209,8 +209,9 @@ public fun sell_tokens_helper<T>(
 //     }
 // }
 
-// First we need function to create a new coin type
-public entry fun create_coin<T>(
+// === Create Coin internal ===
+#[allow(lint(self_transfer))]
+public fun create_coin_internal<T>(
     launchpad: &mut token_launcher::Launchpad,
     treasury_cap: TreasuryCap<T>,
     registry: &mut LaunchedCoinsRegistry,
@@ -313,6 +314,33 @@ public entry fun create_coin<T>(
     coin_address
 }
 
+// First we need function to create a new coin type
+public entry fun create_coin<T>(
+    launchpad: &mut token_launcher::Launchpad,
+    treasury_cap: TreasuryCap<T>,
+    registry: &mut LaunchedCoinsRegistry,
+    payment: Coin<SUI>,
+    name: String,
+    symbol: String,
+    description: String,
+    website: String,
+    image_url: String,
+    ctx: &mut TxContext,
+): address {
+    create_coin_internal(
+        launchpad,
+        treasury_cap,
+        registry,
+        payment,
+        name,
+        symbol,
+        description,
+        website,
+        image_url,
+        ctx,
+    )
+}
+
 public entry fun buy_tokens<T>(
     launchpad: &token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
@@ -363,6 +391,83 @@ public entry fun buy_tokens<T>(
         new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
     });
+}
+
+public entry fun sell_tokens<T>(
+    launchpad: &token_launcher::Launchpad,
+    coin_info: &mut CoinInfo<T>,
+    tokens: Coin<T>,
+    ctx: &mut TxContext,
+) {
+    let token_amount = coin::value(&tokens);
+
+    // Process the sell operation using bonding curve
+    let (sui_amount, return_coin) = sell_tokens_helper(
+        launchpad,
+        coin_info,
+        token_amount,
+        ctx,
+    );
+
+    // Update supply (decrease)
+    coin_info.supply = coin_info.supply - token_amount;
+
+    // Burn the tokens
+    coin::burn(&mut coin_info.protected_cap.cap, tokens);
+
+    // Transfer return amount to seller
+    transfer::public_transfer(return_coin, tx_context::sender(ctx));
+
+    // Calculate new price
+    let new_price = bonding_curve::calculate_price(
+        coin_info.virtual_sui_reserves,
+        coin_info.virtual_token_reserves,
+    );
+
+    // Emit sell event
+    event::emit(TradeEvent {
+        is_buy: false,
+        coin_address: object::uid_to_address(&coin_info.id),
+        user_address: tx_context::sender(ctx),
+        token_amount: token_amount,
+        sui_amount: sui_amount,
+        new_supply: coin_info.supply,
+        new_price,
+        new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
+        new_virtual_token_reserves: coin_info.virtual_token_reserves,
+    });
+}
+
+// === Battle Royale ===
+public entry fun create_coin_for_br<T>(
+    launchpad: &mut token_launcher::Launchpad,
+    treasury_cap: TreasuryCap<T>,
+    registry: &mut LaunchedCoinsRegistry,
+    battle_royale: &mut BattleRoyale,
+    payment: Coin<SUI>,
+    name: String,
+    symbol: String,
+    description: String,
+    website: String,
+    image_url: String,
+    ctx: &mut TxContext,
+): address {
+    let coin_address = create_coin_internal(
+        launchpad,
+        treasury_cap,
+        registry,
+        payment,
+        name,
+        symbol,
+        description,
+        website,
+        image_url,
+        ctx,
+    );
+
+    // Register the coin in the battle royale
+    battle_royale::register_coin(battle_royale, coin_address, ctx);
+    coin_address
 }
 
 public entry fun buy_tokens_with_br<T>(
@@ -462,51 +567,6 @@ public entry fun buy_tokens_with_br<T>(
         user_address: tx_context::sender(ctx),
         token_amount: tokens_to_mint,
         sui_amount,
-        new_supply: coin_info.supply,
-        new_price,
-        new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
-        new_virtual_token_reserves: coin_info.virtual_token_reserves,
-    });
-}
-
-public entry fun sell_tokens<T>(
-    launchpad: &token_launcher::Launchpad,
-    coin_info: &mut CoinInfo<T>,
-    tokens: Coin<T>,
-    ctx: &mut TxContext,
-) {
-    let token_amount = coin::value(&tokens);
-
-    // Process the sell operation using bonding curve
-    let (sui_amount, return_coin) = sell_tokens_helper(
-        launchpad,
-        coin_info,
-        token_amount,
-        ctx,
-    );
-
-    // Update supply (decrease)
-    coin_info.supply = coin_info.supply - token_amount;
-
-    // Burn the tokens
-    coin::burn(&mut coin_info.protected_cap.cap, tokens);
-
-    // Transfer return amount to seller
-    transfer::public_transfer(return_coin, tx_context::sender(ctx));
-
-    // Calculate new price
-    let new_price = bonding_curve::calculate_price(
-        coin_info.virtual_sui_reserves,
-        coin_info.virtual_token_reserves,
-    );
-
-    // Emit sell event
-    event::emit(TradeEvent {
-        is_buy: false,
-        coin_address: object::uid_to_address(&coin_info.id),
-        user_address: tx_context::sender(ctx),
-        token_amount: token_amount,
-        sui_amount: sui_amount,
         new_supply: coin_info.supply,
         new_price,
         new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
