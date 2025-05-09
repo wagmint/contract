@@ -26,10 +26,12 @@ const E_INVALID_SHARES: u64 = 11;
 const BPS_DENOMINATOR: u64 = 10000;
 const DEFAULT_BR_FEE_BPS: u64 = 1000; // 10% of regular trading fees go to BR
 const DEFAULT_PARTICIPATION_FEE: u64 = 5_000_000_000; // 5 SUI
-const DEFAULT_FIRST_PLACE_BPS: u64 = 5000; // 50%
+const DEFAULT_FIRST_PLACE_BPS: u64 = 5500; // 55%
 const DEFAULT_SECOND_PLACE_BPS: u64 = 2500; // 25%
 const DEFAULT_THIRD_PLACE_BPS: u64 = 1500; // 15%
-const DEFAULT_PLATFORM_FEE_BPS: u64 = 1000; // 10%
+const DEFAULT_PLATFORM_FEE_BPS: u64 = 500; // 5%
+const DEFAULT_MAX_COINS_PER_PARTICIPANT: u64 = 1; // Max coins per participant
+const DEFAULT_MID_BATTLE_REGISTRATION_ENABLED: bool = false; // Mid-battle registration disabled by default
 
 // Represents a Battle Royale competition
 public struct BattleRoyale has key {
@@ -40,15 +42,16 @@ public struct BattleRoyale has key {
     start_time: u64, // Epoch time when BR starts
     end_time: u64, // Epoch time when BR ends
     prize_pool: Balance<SUI>, // Total prize pool
-    participants: Table<address, bool>, // Mapping of participant address -> is_registered
-    participant_coins: Table<address, address>, // Mapping of coin address -> participant address
+    participant_to_coins: Table<address, vector<address>>, // Mapping of participant address -> coin address
+    max_coins_per_participant: u64,
+    mid_battle_registration_enabled: bool,
+    coin_to_participant: Table<address, address>, // Mapping of coin address -> participant address
     participation_fee: u64,
     br_fee_bps: u64, // BPS of trading fees that go to BR
     first_place_bps: u64, // BPS of prize pool for first place
     second_place_bps: u64, // BPS of prize pool for second place
     third_place_bps: u64, // BPS of prize pool for third place
     platform_fee_bps: u64, // BPS of prize pool for platform fee
-    is_active: bool, // whether BR is active or not
     is_finalized: bool, // whether prizes have been distributed
     is_cancelled: bool, // whether BR was cancelled
 }
@@ -158,6 +161,55 @@ public struct TradeFeeToBREvent has copy, drop {
     new_prize_pool: u64,
 }
 
+// Function to register a participant in a BR
+public entry fun register_participant(
+    br: &mut BattleRoyale,
+    mut payment: Coin<SUI>,
+    ctx: &mut TxContext,
+) {
+    // Ensure BR is not finalized or cancelled
+    assert!(!br.is_finalized && !br.is_cancelled, E_BR_NOT_OPEN);
+    assert!(
+        !table::contains(&br.participant_to_coins, tx_context::sender(ctx)),
+        E_ALREADY_REGISTERED,
+    );
+
+    // Ensure BR hasn't ended
+    let current_time = tx_context::epoch(ctx);
+    assert!(current_time <= br.end_time, E_BR_NOT_OPEN);
+
+    if (current_time > br.start_time) {
+        // Ensure mid-battle registration is enabled
+        assert!(br.mid_battle_registration_enabled, E_BR_NOT_OPEN);
+    };
+
+    // Validate payment
+    let payment_amount = coin::value(&payment);
+    assert!(payment_amount >= br.participation_fee, E_INSUFFICIENT_PAYMENT);
+
+    // Process participation fee
+    if (payment_amount > br.participation_fee) {
+        // Refund excess payment
+        let excess_payment = coin::split(&mut payment, payment_amount - br.participation_fee, ctx);
+        transfer::public_transfer(excess_payment, tx_context::sender(ctx));
+    };
+    let fee_balance = coin::into_balance(payment);
+
+    // Add fee to prize pool
+    balance::join(&mut br.prize_pool, fee_balance);
+
+    // Register the participant in the BR
+    table::add(&mut br.participant_to_coins, tx_context::sender(ctx), vector::empty<address>());
+
+    // Emit registration event
+    event::emit(ParticipantRegisteredEvent {
+        br_address: object::uid_to_address(&br.id),
+        participant: tx_context::sender(ctx),
+        participation_fee: br.participation_fee,
+        registration_time: current_time,
+    });
+}
+
 // Function to register a coin in a BR and update registry
 public fun register_coin(br: &mut BattleRoyale, coin_address: address, ctx: &mut TxContext) {
     let br_address = object::uid_to_address(&br.id);
@@ -169,17 +221,23 @@ public fun register_coin(br: &mut BattleRoyale, coin_address: address, ctx: &mut
     // Ensure BR hasn't ended
     assert!(current_time <= br.end_time, E_BR_NOT_OPEN);
 
-    // Ensure coin is not already registered in this BR
-    assert!(!table::contains(&br.participant_coins, coin_address), E_ALREADY_REGISTERED);
-
     // Ensure participant is already registered
     assert!(
-        table::contains(&br.participants, tx_context::sender(ctx)),
+        table::contains(&br.participant_to_coins, tx_context::sender(ctx)),
         E_PARTICIPANT_NOT_REGISTERED,
     );
 
-    // Register the coin in the BR
-    table::add(&mut br.participant_coins, coin_address, tx_context::sender(ctx));
+    // Ensure coin is not already registered
+    assert!(!table::contains(&br.coin_to_participant, coin_address), E_ALREADY_REGISTERED);
+
+    let participant_coins = table::borrow(
+        &br.participant_to_coins,
+        tx_context::sender(ctx),
+    );
+    assert!(vector::length(participant_coins) < br.max_coins_per_participant, E_ALREADY_REGISTERED);
+
+    br.participant_to_coins[tx_context::sender(ctx)].push_back(coin_address);
+    table::add(&mut br.coin_to_participant, coin_address, tx_context::sender(ctx));
 
     // Emit registration event
     event::emit(CoinRegisteredEvent {
@@ -190,6 +248,35 @@ public fun register_coin(br: &mut BattleRoyale, coin_address: address, ctx: &mut
     });
 }
 
+// Create a BR with default settings
+public entry fun create_default_battle_royale(
+    launchpad: &token_launcher::Launchpad,
+    name: String,
+    description: String,
+    start_time: u64,
+    end_time: u64,
+    initial_prize: Coin<SUI>,
+    ctx: &mut TxContext,
+) {
+    create_battle_royale(
+        launchpad,
+        name,
+        description,
+        start_time,
+        end_time,
+        initial_prize,
+        DEFAULT_MAX_COINS_PER_PARTICIPANT,
+        DEFAULT_MID_BATTLE_REGISTRATION_ENABLED,
+        DEFAULT_PARTICIPATION_FEE,
+        DEFAULT_BR_FEE_BPS,
+        DEFAULT_FIRST_PLACE_BPS,
+        DEFAULT_SECOND_PLACE_BPS,
+        DEFAULT_THIRD_PLACE_BPS,
+        DEFAULT_PLATFORM_FEE_BPS,
+        ctx,
+    )
+}
+
 // Create a new Battle Royale
 public entry fun create_battle_royale(
     launchpad: &token_launcher::Launchpad,
@@ -198,6 +285,8 @@ public entry fun create_battle_royale(
     start_time: u64,
     end_time: u64,
     initial_prize: Coin<SUI>,
+    max_coins_per_participant: u64,
+    mid_battle_registration_enabled: bool,
     participation_fee: u64,
     br_fee_bps: u64,
     first_place_bps: u64,
@@ -230,15 +319,16 @@ public entry fun create_battle_royale(
         start_time,
         end_time,
         prize_pool,
-        participants: table::new(ctx),
-        participant_coins: table::new(ctx),
+        participant_to_coins: table::new(ctx),
+        coin_to_participant: table::new(ctx),
+        max_coins_per_participant,
+        mid_battle_registration_enabled,
         participation_fee,
         br_fee_bps,
         first_place_bps,
         second_place_bps,
         third_place_bps,
         platform_fee_bps,
-        is_active: false, // BR becomes active when start_time is reached
         is_finalized: false,
         is_cancelled: false,
     };
@@ -264,50 +354,6 @@ public entry fun create_battle_royale(
 
     // Share the BR object
     transfer::share_object(br);
-}
-
-// Utility to check if BR is ongoing (between start and end time)
-// fun is_battle_royale_ongoing(br: &BattleRoyale, current_time: u64): bool {
-//     current_time >= br.start_time && current_time <= br.end_time
-// }
-
-public entry fun register_participant(
-    br: &mut BattleRoyale,
-    mut payment: Coin<SUI>,
-    ctx: &mut TxContext,
-) {
-    // Ensure BR is not finalized or cancelled
-    assert!(!br.is_finalized && !br.is_cancelled, E_BR_NOT_OPEN);
-
-    // Ensure BR hasn't ended
-    let current_time = tx_context::epoch(ctx);
-    assert!(current_time <= br.end_time, E_BR_NOT_OPEN);
-
-    // Validate payment
-    let payment_amount = coin::value(&payment);
-    assert!(payment_amount >= br.participation_fee, E_INSUFFICIENT_PAYMENT);
-
-    // Process participation fee
-    if (payment_amount > br.participation_fee) {
-        // Refund excess payment
-        let excess_payment = coin::split(&mut payment, payment_amount - br.participation_fee, ctx);
-        transfer::public_transfer(excess_payment, tx_context::sender(ctx));
-    };
-    let fee_balance = coin::into_balance(payment);
-
-    // Add fee to prize pool
-    balance::join(&mut br.prize_pool, fee_balance);
-
-    // Register the participant in the BR
-    table::add(&mut br.participants, tx_context::sender(ctx), true);
-
-    // Emit registration event
-    event::emit(ParticipantRegisteredEvent {
-        br_address: object::uid_to_address(&br.id),
-        participant: tx_context::sender(ctx),
-        participation_fee: br.participation_fee,
-        registration_time: current_time,
-    });
 }
 
 // Add to prize pool (can be called by anyone)
@@ -338,8 +384,19 @@ public entry fun contribute_to_prize_pool(
 public fun contribute_trade_fee(
     br: &mut BattleRoyale,
     coin_address: address,
-    fee_balance: Balance<SUI>,
+    mut fee_balance: Balance<SUI>,
+    ctx: &mut TxContext,
 ) {
+    let current_time = tx_context::epoch(ctx);
+    if (!is_battle_royale_active(br, current_time)) {
+        // transfer fee to BR admin
+        let fee_amount = balance::value(&fee_balance);
+        let fee_coin = coin::take(&mut fee_balance, fee_amount, ctx);
+        balance::destroy_zero(fee_balance);
+        transfer::public_transfer(fee_coin, br.admin);
+        return
+    };
+
     let fee_amount = balance::value(&fee_balance);
 
     // Add fee to prize pool
@@ -379,15 +436,15 @@ public entry fun finalize_battle_royale(
 
     // Validate winners are registered participants
     assert!(
-        table::contains(&br.participant_coins, first_place_coin_address),
+        table::contains(&br.coin_to_participant, first_place_coin_address),
         E_COIN_NOT_REGISTERED,
     );
     assert!(
-        table::contains(&br.participant_coins, second_place_coin_address),
+        table::contains(&br.coin_to_participant, second_place_coin_address),
         E_COIN_NOT_REGISTERED,
     );
     assert!(
-        table::contains(&br.participant_coins, third_place_coin_address),
+        table::contains(&br.coin_to_participant, third_place_coin_address),
         E_COIN_NOT_REGISTERED,
     );
 
@@ -410,9 +467,9 @@ public entry fun finalize_battle_royale(
     };
 
     // Get creators of winning coins
-    let first_place_user_address = br.participant_coins[first_place_coin_address];
-    let second_place_user_address = br.participant_coins[second_place_coin_address];
-    let third_place_user_address = br.participant_coins[third_place_coin_address];
+    let first_place_user_address = br.coin_to_participant[first_place_coin_address];
+    let second_place_user_address = br.coin_to_participant[second_place_coin_address];
+    let third_place_user_address = br.coin_to_participant[third_place_coin_address];
 
     // Create winner registry
     let mut winner_registry = WinnerRegistry {
@@ -464,7 +521,6 @@ public entry fun finalize_battle_royale(
     balance::join(&mut winner_registry.total_prize_pool, balance::withdraw_all(&mut br.prize_pool));
 
     // Mark BR as finalized
-    br.is_active = false;
     br.is_finalized = true;
 
     // Emit finalization event
@@ -547,7 +603,6 @@ public entry fun cancel_battle_royale(br: &mut BattleRoyale, reason: String, ctx
     assert!(!br.is_finalized && !br.is_cancelled, E_BR_NOT_OPEN);
 
     // Mark BR as cancelled
-    br.is_active = false;
     br.is_cancelled = true;
 
     // Emit cancellation event
@@ -576,7 +631,7 @@ public entry fun drain_remaining_funds(br: &mut BattleRoyale, ctx: &mut TxContex
 // Get BR info
 public fun get_battle_royale_info(
     br: &BattleRoyale,
-): (String, String, address, u64, u64, u64, u64, bool, bool, bool) {
+): (String, String, address, u64, u64, u64, u64, bool, bool) {
     (
         br.name,
         br.description,
@@ -585,7 +640,6 @@ public fun get_battle_royale_info(
         br.end_time,
         balance::value(&br.prize_pool),
         br.participation_fee,
-        br.is_active,
         br.is_finalized,
         br.is_cancelled,
     )
@@ -593,7 +647,7 @@ public fun get_battle_royale_info(
 
 // Check if a coin is registered in a BR
 public fun is_coin_registered(br: &BattleRoyale, coin_address: address): bool {
-    table::contains(&br.participant_coins, coin_address)
+    table::contains(&br.coin_to_participant, coin_address)
 }
 
 // Get prize distribution percentages
@@ -608,12 +662,17 @@ public fun get_br_fee_bps(br: &BattleRoyale): u64 {
 
 // Get br participating coins
 public fun does_coin_participate(br: &BattleRoyale, coin_address: address): bool {
-    table::contains(&br.participant_coins, coin_address)
+    table::contains(&br.coin_to_participant, coin_address)
 }
 
 // Get BR is active
-public fun is_battle_royale_active(br: &BattleRoyale): bool {
-    br.is_active
+public fun is_battle_royale_active(br: &BattleRoyale, current_time: u64): bool {
+    current_time >= br.start_time && current_time <= br.end_time
+}
+
+// Get BR is open
+public fun is_battle_royale_open(br: &BattleRoyale, current_time: u64): bool {
+    current_time >= br.start_time
 }
 
 // Get BR is finalized
@@ -626,29 +685,14 @@ public fun is_battle_royale_cancelled(br: &BattleRoyale): bool {
     br.is_cancelled
 }
 
-// Create a BR with default settings
-public entry fun create_default_battle_royale(
-    launchpad: &token_launcher::Launchpad,
-    name: String,
-    description: String,
-    start_time: u64,
-    end_time: u64,
-    initial_prize: Coin<SUI>,
-    ctx: &mut TxContext,
-) {
-    create_battle_royale(
-        launchpad,
-        name,
-        description,
-        start_time,
-        end_time,
-        initial_prize,
-        DEFAULT_PARTICIPATION_FEE,
-        DEFAULT_BR_FEE_BPS,
-        DEFAULT_FIRST_PLACE_BPS,
-        DEFAULT_SECOND_PLACE_BPS,
-        DEFAULT_THIRD_PLACE_BPS,
-        DEFAULT_PLATFORM_FEE_BPS,
-        ctx,
-    )
+// Check if a coin is valid for Battle Royale
+public fun is_coin_valid_for_battle_royale(
+    br: &BattleRoyale,
+    coin_address: address,
+    current_time: u64,
+): bool {
+    does_coin_participate(br, coin_address) &&
+    is_battle_royale_active(br, current_time) &&
+    !is_battle_royale_finalized(br) &&
+    !is_battle_royale_cancelled(br)
 }

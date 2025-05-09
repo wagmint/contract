@@ -17,6 +17,7 @@ const E_INSUFFICIENT_PAYMENT: u64 = 2;
 const E_INSUFFICIENT_BALANCE: u64 = 3;
 const E_AMOUNT_TOO_SMALL: u64 = 4;
 const E_ALREADY_GRADUATED: u64 = 6;
+const E_BATTLE_ROYALE_NOT_ACTIVE_FOR_TRADE: u64 = 7;
 
 // Constants for validation
 const MAX_NAME_LENGTH: u64 = 32;
@@ -485,18 +486,17 @@ public entry fun buy_tokens_with_br<T>(
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
+    let current_epoch = tx_context::epoch(ctx);
+    assert!(
+        battle_royale::is_battle_royale_open(br, current_epoch),
+        E_BATTLE_ROYALE_NOT_ACTIVE_FOR_TRADE,
+    );
+
     // Validate amount
     assert!(sui_amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
 
     // Get coin address
     let coin_address = object::uid_to_address(&coin_info.id);
-
-    // Check if coin is registered in this BR and BR is active
-    let is_valid_br =
-        battle_royale::does_coin_participate(br, coin_address) && 
-        battle_royale::is_battle_royale_active(br) && 
-        battle_royale::is_battle_royale_finalized(br) &&
-        battle_royale::is_battle_royale_cancelled(br);
 
     // Use the bonding curve to calculate tokens and process payment
     // Calculate tokens to mint based on the constant product formula
@@ -518,7 +518,7 @@ public entry fun buy_tokens_with_br<T>(
     let paid = coin::split(payment, total_cost, ctx);
     let mut paid_balance = coin::into_balance(paid);
 
-    if (is_valid_br) {
+    if (battle_royale::is_coin_valid_for_battle_royale(br, coin_address, current_epoch)) {
         // Calculate BR fee
         let br_fee_bps = battle_royale::get_br_fee_bps(br);
         let br_fee = (fee * br_fee_bps) / BPS_DENOMINATOR;
@@ -529,7 +529,7 @@ public entry fun buy_tokens_with_br<T>(
             fee = fee - br_fee;
 
             // Contribute fee to BR
-            battle_royale::contribute_trade_fee(br, coin_address, br_fee_payment);
+            battle_royale::contribute_trade_fee(br, coin_address, br_fee_payment, ctx);
         };
     };
 
@@ -588,17 +588,16 @@ public entry fun sell_tokens_with_br<T>(
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
+    let current_epoch = tx_context::epoch(ctx);
+    assert!(
+        battle_royale::is_battle_royale_open(br, current_epoch),
+        E_BATTLE_ROYALE_NOT_ACTIVE_FOR_TRADE,
+    );
+
     let token_amount = coin::value(&tokens);
 
     // Get coin address
     let coin_address = object::uid_to_address(&coin_info.id);
-
-    // Check if coin is registered in this BR and BR is active
-    let is_valid_br =
-        battle_royale::does_coin_participate(br, coin_address) && 
-        battle_royale::is_battle_royale_active(br) && 
-        battle_royale::is_battle_royale_finalized(br) &&
-        battle_royale::is_battle_royale_cancelled(br);
 
     // Process the sell operation using bonding curve
     let return_cost = bonding_curve::calculate_sale_return(
@@ -624,7 +623,7 @@ public entry fun sell_tokens_with_br<T>(
     let return_payment = balance::split(&mut coin_info.real_sui_reserves, final_return_cost);
 
     // If valid BR, collect fees
-    if (is_valid_br) {
+    if (battle_royale::is_coin_valid_for_battle_royale(br, coin_address, current_epoch)) {
         // Calculate BR fee
         let br_fee_bps = battle_royale::get_br_fee_bps(br);
         let br_fee = (fee * br_fee_bps) / BPS_DENOMINATOR;
@@ -634,7 +633,7 @@ public entry fun sell_tokens_with_br<T>(
             let br_fee_payment = balance::split(&mut fee_payment, br_fee);
 
             // Contribute fee to BR
-            battle_royale::contribute_trade_fee(br, coin_address, br_fee_payment);
+            battle_royale::contribute_trade_fee(br, coin_address, br_fee_payment, ctx);
         };
     };
 
