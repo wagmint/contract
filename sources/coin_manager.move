@@ -93,10 +93,11 @@ public fun calculate_transaction_fee(amount: u64, transaction_fee_bps: u64): u64
 }
 
 // === Buy functionality ===
+#[allow(lint(self_transfer))]
 public fun buy_tokens_helper<T>(
     launchpad: &token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
-    payment: &mut Coin<SUI>,
+    mut payment: Coin<SUI>,
     amount: u64,
     ctx: &mut TxContext,
 ): u64 {
@@ -116,11 +117,17 @@ public fun buy_tokens_helper<T>(
     let total_cost = amount + fee;
 
     // Validate payment
-    assert!(coin::value(payment) >= total_cost, E_INSUFFICIENT_PAYMENT);
+    let payment_amount = coin::value(&payment);
+    assert!(payment_amount >= total_cost, E_INSUFFICIENT_PAYMENT);
+
+    if (payment_amount > total_cost) {
+        // Return excess payment to sender
+        let remainder = coin::split(&mut payment, payment_amount - total_cost, ctx);
+        transfer::public_transfer(remainder, tx_context::sender(ctx));
+    };
 
     // Process payment
-    let paid = coin::split(payment, total_cost, ctx);
-    let mut paid_balance = coin::into_balance(paid);
+    let mut paid_balance = coin::into_balance(payment);
 
     // Split and transfer fee
     let fee_payment = balance::split(&mut paid_balance, fee);
@@ -315,7 +322,7 @@ public entry fun create_coin<T>(
 public entry fun buy_tokens<T>(
     launchpad: &token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
-    payment: &mut Coin<SUI>,
+    payment: Coin<SUI>,
     sui_amount: u64,
     ctx: &mut TxContext,
 ) {

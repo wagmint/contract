@@ -212,7 +212,7 @@ fun test_create_coin() {
     test_scenario::next_tx(&mut scenario, USER);
     {
         // Create a payment coin with sufficient funds
-        let mut payment = coin::mint_for_testing<SUI>(
+        let payment = coin::mint_for_testing<SUI>(
             10_000_000_000,
             test_scenario::ctx(&mut scenario),
         );
@@ -240,7 +240,7 @@ fun test_create_coin() {
         coin_manager::buy_tokens<TEST_COIN>(
             &launchpad,
             &mut coin_info,
-            &mut payment,
+            payment,
             sui_amount,
             test_scenario::ctx(&mut scenario),
         );
@@ -267,7 +267,6 @@ fun test_create_coin() {
         test_scenario::return_shared(coin_info);
         test_scenario::return_shared(launchpad);
         test_scenario::return_to_address(ADMIN, address_holder);
-        coin::burn_for_testing(payment);
     };
 
     // Clean up
