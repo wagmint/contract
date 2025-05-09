@@ -160,7 +160,6 @@ public struct TradeFeeToBREvent has copy, drop {
 
 // Function to register a coin in a BR and update registry
 public fun register_coin(br: &mut BattleRoyale, coin_address: address, ctx: &mut TxContext) {
-    // let coin_address = object::uid_to_address(&coin_info.id);
     let br_address = object::uid_to_address(&br.id);
     let current_time = tx_context::epoch(ctx);
 
@@ -178,7 +177,7 @@ public fun register_coin(br: &mut BattleRoyale, coin_address: address, ctx: &mut
         table::contains(&br.participants, tx_context::sender(ctx)),
         E_PARTICIPANT_NOT_REGISTERED,
     );
-    
+
     // Register the coin in the BR
     table::add(&mut br.participant_coins, coin_address, tx_context::sender(ctx));
 
