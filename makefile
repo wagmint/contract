@@ -58,3 +58,7 @@ sell-tokens:
 			$(COIN_INFO_ID) \
 			$(TOKEN_COIN_ID) \
 		--gas-budget 100000000
+upgrade:
+	@sui client upgrade \
+		--upgrade-capability $(UPGRADE_CAP_ID) 
+		
