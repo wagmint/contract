@@ -1,5 +1,7 @@
 module wagmint::token_launcher_tests;
 
+use sui::coin::{Self, Coin};
+use sui::sui::SUI;
 use sui::test_scenario::{Self, Scenario};
 use sui::test_utils::assert_eq;
 use wagmint::token_launcher::{Self, Launchpad, LaunchedCoinsRegistry};
@@ -39,6 +41,9 @@ fun test_init_internal(scenario: &mut Scenario) {
         assert_eq(token_launcher::get_initial_virtual_tokens(&launchpad), 1_000_000_000_000_000); // 1B tokens
         assert_eq(token_launcher::get_token_decimals(&launchpad), 6);
         assert_eq(vector::length(&token_launcher::get_launched_coins(&registry)), 0);
+        let treasury = token_launcher::get_treasury(&launchpad);
+        let treasury_value = treasury.value();
+        assert_eq(treasury_value, 0);
 
         test_scenario::return_shared(launchpad);
         test_scenario::return_shared(registry);
@@ -61,6 +66,56 @@ fun test_update_admin() {
         );
         assert_eq(token_launcher::get_admin(&launchpad), NEW_ADMIN);
         test_scenario::return_shared(launchpad);
+    };
+
+    test_scenario::end(scenario);
+}
+
+#[test]
+fun test_withdraw_treasury() {
+    let mut scenario = test_scenario::begin(ADMIN);
+    test_init_internal(&mut scenario);
+
+    // add some SUI to the treasury
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    {
+        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
+        let payment = coin::mint_for_testing<sui::sui::SUI>(
+            100_000_000_000,
+            test_scenario::ctx(&mut scenario),
+        );
+        let payment_balance = coin::into_balance(payment);
+        token_launcher::add_to_treasury(&mut launchpad, payment_balance);
+        test_scenario::return_shared(launchpad);
+    };
+
+    // Call and verify withdraw_treasury function
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    {
+        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
+        token_launcher::withdraw_treasury(
+            &mut launchpad,
+            100_000_000_000, // 100 SUI
+            ADMIN,
+            test_scenario::ctx(&mut scenario),
+        );
+        let treasury = token_launcher::get_treasury(&launchpad);
+        let treasury_value = treasury.value();
+        assert_eq(treasury_value, 0);
+        test_scenario::return_shared(launchpad);
+    };
+
+    // Verify ADMIN received the payment
+    test_scenario::next_tx(&mut scenario, ADMIN);
+    {
+        // Take the SUI coin from ADMIN's account
+        let coin = test_scenario::take_from_address<Coin<SUI>>(&scenario, ADMIN);
+
+        // Verify the amount
+        assert_eq(coin::value(&coin), 100_000_000_000);
+
+        // Return the coin
+        test_scenario::return_to_address(ADMIN, coin);
     };
 
     test_scenario::end(scenario);
