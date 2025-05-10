@@ -24,7 +24,7 @@ const E_INVALID_SHARES: u64 = 11;
 
 // Constants
 const BPS_DENOMINATOR: u64 = 10000;
-const DEFAULT_BR_FEE_BPS: u64 = 1000; // 10% of regular trading fees go to BR
+const DEFAULT_BR_FEE_BPS: u64 = 5000; // 50% of regular trading fees go to BR
 const DEFAULT_PARTICIPATION_FEE: u64 = 5_000_000_000; // 5 SUI
 const DEFAULT_FIRST_PLACE_BPS: u64 = 5500; // 55%
 const DEFAULT_SECOND_PLACE_BPS: u64 = 2500; // 25%
@@ -152,6 +152,26 @@ public struct BattleRoyaleFinalizedEvent has copy, drop {
     third_place: address,
     third_place_amount: u64,
     total_prize_pool: u64,
+}
+
+public struct BattleRoyaleUpdatedEvent has copy, drop {
+    br_address: address,
+    old_max_coins_per_participant: u64,
+    new_max_coins_per_participant: u64,
+    old_mid_battle_registration_enabled: bool,
+    new_mid_battle_registration_enabled: bool,
+    old_participation_fee: u64,
+    new_participation_fee: u64,
+    old_br_fee_bps: u64,
+    new_br_fee_bps: u64,
+    old_first_place_bps: u64,
+    new_first_place_bps: u64,
+    old_second_place_bps: u64,
+    new_second_place_bps: u64,
+    old_third_place_bps: u64,
+    new_third_place_bps: u64,
+    old_platform_fee_bps: u64,
+    new_platform_fee_bps: u64,
 }
 
 public struct TradeFeeToBREvent has copy, drop {
@@ -354,6 +374,68 @@ public entry fun create_battle_royale(
 
     // Share the BR object
     transfer::share_object(br);
+}
+
+public entry fun update_battle_royale(
+    br: &mut BattleRoyale,
+    max_coins_per_participant: u64,
+    mid_battle_registration_enabled: bool,
+    participation_fee: u64,
+    br_fee_bps: u64,
+    first_place_bps: u64,
+    second_place_bps: u64,
+    third_place_bps: u64,
+    platform_fee_bps: u64,
+    ctx: &mut TxContext,
+) {
+    // Ensure only admin can update a BR
+    assert!(tx_context::sender(ctx) == br.admin, E_NOT_ADMIN);
+
+    // Validate prize distribution adds up to 10000 BPS (100%)
+    assert!(
+        first_place_bps + second_place_bps + third_place_bps + platform_fee_bps == BPS_DENOMINATOR,
+        E_INVALID_TIME,
+    );
+
+    let old_max_coins_per_participant = br.max_coins_per_participant;
+    let old_mid_battle_registration_enabled = br.mid_battle_registration_enabled;
+    let old_participation_fee = br.participation_fee;
+    let old_br_fee_bps = br.br_fee_bps;
+    let old_first_place_bps = br.first_place_bps;
+    let old_second_place_bps = br.second_place_bps;
+    let old_third_place_bps = br.third_place_bps;
+    let old_platform_fee_bps = br.platform_fee_bps;
+
+    // Update BR object
+    br.max_coins_per_participant = max_coins_per_participant;
+    br.mid_battle_registration_enabled = mid_battle_registration_enabled;
+    br.participation_fee = participation_fee;
+    br.br_fee_bps = br_fee_bps;
+    br.first_place_bps = first_place_bps;
+    br.second_place_bps = second_place_bps;
+    br.third_place_bps = third_place_bps;
+    br.platform_fee_bps = platform_fee_bps;
+
+    // Emit update event
+    event::emit(BattleRoyaleUpdatedEvent {
+        br_address: object::uid_to_address(&br.id),
+        old_max_coins_per_participant,
+        new_max_coins_per_participant: max_coins_per_participant,
+        old_mid_battle_registration_enabled,
+        new_mid_battle_registration_enabled: mid_battle_registration_enabled,
+        old_participation_fee,
+        new_participation_fee: participation_fee,
+        old_br_fee_bps,
+        new_br_fee_bps: br_fee_bps,
+        old_first_place_bps,
+        new_first_place_bps: first_place_bps,
+        old_second_place_bps,
+        new_second_place_bps: second_place_bps,
+        old_third_place_bps,
+        new_third_place_bps: third_place_bps,
+        old_platform_fee_bps,
+        new_platform_fee_bps: platform_fee_bps,
+    });
 }
 
 // Add to prize pool (can be called by anyone)
