@@ -524,7 +524,7 @@ public entry fun buy_tokens_with_br<T>(
             fee = fee - br_fee;
 
             // Contribute fee to BR
-            battle_royale::contribute_trade_fee(br, coin_address, br_fee_payment, ctx);
+            battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, ctx);
         };
     };
 

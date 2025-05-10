@@ -464,18 +464,16 @@ public entry fun contribute_to_prize_pool(
 
 // Called during trades in coin_manager to contribute fees to BR
 public fun contribute_trade_fee(
+    launchpad: &mut token_launcher::Launchpad,
     br: &mut BattleRoyale,
     coin_address: address,
-    mut fee_balance: Balance<SUI>,
+    fee_balance: Balance<SUI>,
     ctx: &mut TxContext,
 ) {
     let current_time = tx_context::epoch(ctx);
     if (!is_battle_royale_active(br, current_time)) {
-        // transfer fee to BR admin
-        let fee_amount = balance::value(&fee_balance);
-        let fee_coin = coin::take(&mut fee_balance, fee_amount, ctx);
-        balance::destroy_zero(fee_balance);
-        transfer::public_transfer(fee_coin, br.admin);
+        // transfer fee to treasury
+        token_launcher::add_to_treasury(launchpad, fee_balance);
         return
     };
 
