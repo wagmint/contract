@@ -624,7 +624,7 @@ public entry fun sell_tokens_with_br<T>(
             let br_fee_payment = balance::split(&mut fee_payment, br_fee);
 
             // Contribute fee to BR
-            battle_royale::contribute_trade_fee(br, coin_address, br_fee_payment, ctx);
+            battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, ctx);
         };
     };
 
