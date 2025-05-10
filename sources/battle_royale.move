@@ -728,8 +728,8 @@ public fun is_coin_registered(br: &BattleRoyale, coin_address: address): bool {
 }
 
 // Get prize distribution percentages
-public fun get_prize_distribution(br: &BattleRoyale): (u64, u64, u64) {
-    (br.first_place_bps, br.second_place_bps, br.third_place_bps)
+public fun get_prize_distribution(br: &BattleRoyale): (u64, u64, u64, u64) {
+    (br.first_place_bps, br.second_place_bps, br.third_place_bps, br.platform_fee_bps)
 }
 
 // Get BR fee percentage

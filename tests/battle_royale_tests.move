@@ -130,10 +130,12 @@ fun test_init_internal(scenario: &mut Scenario) {
             first_place_bps,
             second_place_bps,
             third_place_bps,
+            platform_fee_bps,
         ) = battle_royale::get_prize_distribution(&br);
         assert_eq(first_place_bps, BR_FIRST_PLACE_BPS);
         assert_eq(second_place_bps, BR_SECOND_PLACE_BPS);
         assert_eq(third_place_bps, BR_THIRD_PLACE_BPS);
+        assert_eq(platform_fee_bps, BR_PLATFORM_FEE_BPS);
 
         // Verify fee BPS
         assert_eq(battle_royale::get_br_fee_bps(&br), BR_FEE_BPS);
@@ -562,10 +564,16 @@ fun test_update_battle_royale() {
         );
         assert_eq(new_participation_fee, new_fee);
 
-        let (new_first, new_second, new_third) = battle_royale::get_prize_distribution(&br);
+        let (
+            new_first,
+            new_second,
+            new_third,
+            new_br_platform_fee,
+        ) = battle_royale::get_prize_distribution(&br);
         assert_eq(new_first, new_first_place_bps);
         assert_eq(new_second, new_second_place_bps);
         assert_eq(new_third, new_third_place_bps);
+        assert_eq(new_br_platform_fee, new_platform_fee_bps);
 
         assert_eq(battle_royale::get_br_fee_bps(&br), new_br_fee_bps);
 
@@ -1596,10 +1604,11 @@ fun test_default_battle_royale_creation() {
         );
         assert_eq(participation_fee, battle_royale::test_get_DEFAULT_PARTICIPATION_FEE());
 
-        let (first, second, third) = battle_royale::get_prize_distribution(&br);
+        let (first, second, third, platform) = battle_royale::get_prize_distribution(&br);
         assert_eq(first, battle_royale::test_get_DEFAULT_FIRST_PLACE_BPS());
         assert_eq(second, battle_royale::test_get_DEFAULT_SECOND_PLACE_BPS());
         assert_eq(third, battle_royale::test_get_DEFAULT_THIRD_PLACE_BPS());
+        assert_eq(platform, battle_royale::test_get_DEFAULT_PLATFORM_FEE_BPS());
 
         assert_eq(battle_royale::get_br_fee_bps(&br), battle_royale::test_get_DEFAULT_BR_FEE_BPS());
 
@@ -1610,92 +1619,3 @@ fun test_default_battle_royale_creation() {
 
     test_scenario::end(scenario);
 }
-
-// COIN>>(
-//             scenario,
-//             ADMIN,
-//         );
-
-//         // Payment for coin creation
-//         let payment = coin::mint_for_testing<SUI>(
-//             10_000_000_000, // 10 SUI
-//             test_scenario::ctx(scenario),
-//         );
-
-//         // Create coin for battle royale
-//         let coin_address = coin_manager::create_coin_for_br<TEST_COIN>(
-//             &mut launchpad,
-//             treasury_cap,
-//             &mut registry,
-//             &mut br,
-//             payment,
-//             string::utf8(b"Battle Coin 2"),
-//             string::utf8(b"BC2"),
-//             string::utf8(b"A battle coin for testing"),
-//             string::utf8(b"https://example.com"),
-//             string::utf8(b"https://example.com/image.png"),
-//             test_scenario::ctx(scenario),
-//         );
-
-//         // Update address holder with coin address
-//         let mut updated_holder = AddressHolder {
-//             id: address_holder.id,
-//             br_address: address_holder.br_address,
-//             coin1_address: address_holder.coin1_address,
-//             coin2_address: coin_address,
-//             coin3_address: address_holder.coin3_address,
-//         };
-
-//         // Return shared objects
-//         test_scenario::return_shared(launchpad);
-//         test_scenario::return_shared(registry);
-//         test_scenario::return_shared(br);
-//         transfer::transfer(updated_holder, ADMIN);
-//     };
-
-//     // Setup USER3
-//     test_scenario::next_tx(scenario, USER3);
-//     {
-//         // Take the BR address from holder
-//         let address_holder = test_scenario::take_from_address<AddressHolder>(scenario, ADMIN);
-//         let br_address = address_holder.br_address;
-
-//         // Take the BR
-//         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
-//             scenario,
-//             object::id_from_address(br_address)
-//         );
-
-//         // Create payment for participation fee
-//         let payment = coin::mint_for_testing<SUI>(
-//             BR_PARTICIPATION_FEE,
-//             test_scenario::ctx(scenario),
-//         );
-
-//         // Register as participant
-//         battle_royale::register_participant(
-//             &mut br,
-//             payment,
-//             test_scenario::ctx(scenario),
-//         );
-
-//         test_scenario::return_shared(br);
-//         test_scenario::return_to_address(ADMIN, address_holder);
-//     };
-
-//     // Create a coin for USER3
-//     test_scenario::next_tx(scenario, USER3);
-//     {
-//         // Take shared objects needed
-//         let address_holder = test_scenario::take_from_address<AddressHolder>(scenario, ADMIN);
-//         let br_address = address_holder.br_address;
-
-//         let mut launchpad = test_scenario::take_shared<Launchpad>(scenario);
-//         let mut registry = test_scenario::take_shared<LaunchedCoinsRegistry>(scenario);
-//         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
-//             scenario,
-//             object::id_from_address(br_address)
-//         );
-
-//         // Get treasury cap for test coin
-//         let treasury_cap = test_scenario::take_from_address<TreasuryCap<TEST_
