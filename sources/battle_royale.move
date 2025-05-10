@@ -19,7 +19,7 @@ const E_INVALID_TIME: u64 = 6;
 const E_BR_ACTIVE: u64 = 7;
 const E_PARTICIPANT_NOT_REGISTERED: u64 = 8;
 const E_ALREADY_CLAIMED: u64 = 9;
-const E_NOT_CREATOR: u64 = 10;
+const E_NOT_WINNER: u64 = 10;
 const E_INVALID_SHARES: u64 = 11;
 
 // Constants
@@ -71,7 +71,6 @@ public struct WinnerInfo has copy, drop, store {
     rank: u8,
     prize_amount: u64,
     claimed: bool,
-    coin_creator: address,
     coin_address: address,
 }
 
@@ -323,7 +322,7 @@ public entry fun create_battle_royale(
 
     // Validate prize distribution adds up to 10000 BPS (100%)
     assert!(
-        first_place_bps + second_place_bps + third_place_bps == BPS_DENOMINATOR,
+        first_place_bps + second_place_bps + third_place_bps + platform_fee_bps == BPS_DENOMINATOR,
         E_INVALID_TIME,
     );
 
@@ -394,7 +393,7 @@ public entry fun update_battle_royale(
     // Validate prize distribution adds up to 10000 BPS (100%)
     assert!(
         first_place_bps + second_place_bps + third_place_bps + platform_fee_bps == BPS_DENOMINATOR,
-        E_INVALID_TIME,
+        E_INVALID_SHARES,
     );
 
     let old_max_coins_per_participant = br.max_coins_per_participant;
@@ -571,7 +570,6 @@ public entry fun finalize_battle_royale(
             rank: 1,
             prize_amount: first_prize,
             claimed: false,
-            coin_creator: first_place_user_address,
             coin_address: first_place_coin_address,
         },
     );
@@ -583,7 +581,6 @@ public entry fun finalize_battle_royale(
             rank: 2,
             prize_amount: second_prize,
             claimed: false,
-            coin_creator: second_place_user_address,
             coin_address: second_place_coin_address,
         },
     );
@@ -595,7 +592,6 @@ public entry fun finalize_battle_royale(
             rank: 3,
             prize_amount: third_prize,
             claimed: false,
-            coin_creator: third_place_user_address,
             coin_address: third_place_coin_address,
         },
     );
@@ -636,15 +632,14 @@ public entry fun finalize_battle_royale(
 
 // New function for winners to claim prizes
 public entry fun claim_prize(winner_registry: &mut WinnerRegistry, ctx: &mut TxContext) {
+    assert!(table::contains(&winner_registry.winners, tx_context::sender(ctx)), E_NOT_WINNER);
+
     // Get winner info
     let length = table::length(&winner_registry.winners);
     let winner_info = table::borrow_mut(&mut winner_registry.winners, tx_context::sender(ctx));
 
     // Ensure prize hasn't been claimed yet
     assert!(!winner_info.claimed, E_ALREADY_CLAIMED);
-
-    // Ensure the claimer is the coin creator
-    assert!(winner_info.coin_creator == tx_context::sender(ctx), E_NOT_CREATOR);
 
     // Get prize amount
     let prize_amount = winner_info.prize_amount;
@@ -668,7 +663,7 @@ public entry fun claim_prize(winner_registry: &mut WinnerRegistry, ctx: &mut TxC
     event::emit(PrizeClaimedEvent {
         registry_address: object::uid_to_address(&winner_registry.id),
         br_address: winner_registry.battle_royale,
-        creator_address: winner_info.coin_creator,
+        creator_address: tx_context::sender(ctx),
         coin_address: winner_info.coin_address,
         claimer: tx_context::sender(ctx),
         rank: winner_info.rank,
@@ -733,8 +728,8 @@ public fun is_coin_registered(br: &BattleRoyale, coin_address: address): bool {
 }
 
 // Get prize distribution percentages
-public fun get_prize_distribution(br: &BattleRoyale): (u64, u64, u64) {
-    (br.first_place_bps, br.second_place_bps, br.third_place_bps)
+public fun get_prize_distribution(br: &BattleRoyale): (u64, u64, u64, u64) {
+    (br.first_place_bps, br.second_place_bps, br.third_place_bps, br.platform_fee_bps)
 }
 
 // Get BR fee percentage
@@ -777,4 +772,37 @@ public fun is_coin_valid_for_battle_royale(
     is_battle_royale_active(br, current_time) &&
     !is_battle_royale_finalized(br) &&
     !is_battle_royale_cancelled(br)
+}
+
+// Test only
+public fun test_get_battle_royale_address(br: &BattleRoyale): address {
+    object::uid_to_address(&br.id)
+}
+
+public fun test_get_battle_royale_prize_pool(br: &BattleRoyale): u64 {
+    balance::value(&br.prize_pool)
+}
+
+public fun test_get_DEFAULT_PARTICIPATION_FEE(): u64 {
+    DEFAULT_PARTICIPATION_FEE
+}
+
+public fun test_get_DEFAULT_BR_FEE_BPS(): u64 {
+    DEFAULT_BR_FEE_BPS
+}
+
+public fun test_get_DEFAULT_FIRST_PLACE_BPS(): u64 {
+    DEFAULT_FIRST_PLACE_BPS
+}
+
+public fun test_get_DEFAULT_SECOND_PLACE_BPS(): u64 {
+    DEFAULT_SECOND_PLACE_BPS
+}
+
+public fun test_get_DEFAULT_THIRD_PLACE_BPS(): u64 {
+    DEFAULT_THIRD_PLACE_BPS
+}
+
+public fun test_get_DEFAULT_PLATFORM_FEE_BPS(): u64 {
+    DEFAULT_PLATFORM_FEE_BPS
 }
