@@ -186,6 +186,31 @@ public entry fun withdraw_treasury(
     );
 }
 
+// Function to withdraw all funds
+public entry fun withdraw_all_treasury(
+    launchpad: &mut Launchpad,
+    to_address: address,
+    ctx: &mut TxContext,
+) {
+    // Only admin can withdraw
+    assert!(launchpad.admin == tx_context::sender(ctx), E_NOT_ADMIN);
+
+    // Get current treasury balance
+    let treasury_balance = balance::value(&launchpad.treasury);
+    
+    // Skip if nothing to withdraw
+    if (treasury_balance == 0) {
+        return
+    };
+
+    // Take all funds and transfer
+    let withdraw_balance = balance::split(&mut launchpad.treasury, treasury_balance);
+    transfer::public_transfer(
+        coin::from_balance(withdraw_balance, ctx),
+        to_address,
+    );
+}
+
 public fun add_to_treasury(launchpad: &mut Launchpad, payment: Balance<SUI>) {
     balance::join(&mut launchpad.treasury, payment);
 }
