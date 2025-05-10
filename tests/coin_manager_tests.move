@@ -222,7 +222,7 @@ fun test_create_coin() {
         let coin_address = address_holder.addr;
 
         // Take the shared objects
-        let launchpad = test_scenario::take_shared<Launchpad>(&scenario);
+        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
         let mut coin_info = test_scenario::take_shared_by_id<CoinInfo<TEST_COIN>>(
             &scenario,
             object::id_from_address(coin_address),
@@ -238,7 +238,7 @@ fun test_create_coin() {
         let sui_amount = 1_000_000_000; // 1 SUI
 
         coin_manager::buy_tokens<TEST_COIN>(
-            &launchpad,
+            &mut launchpad,
             &mut coin_info,
             payment,
             sui_amount,

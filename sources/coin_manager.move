@@ -97,7 +97,7 @@ public fun calculate_transaction_fee(amount: u64, transaction_fee_bps: u64): u64
 // === Buy functionality ===
 #[allow(lint(self_transfer))]
 public fun buy_tokens_helper<T>(
-    launchpad: &token_launcher::Launchpad,
+    launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
     mut payment: Coin<SUI>,
     amount: u64,
@@ -133,10 +133,7 @@ public fun buy_tokens_helper<T>(
 
     // Split and transfer fee
     let fee_payment = balance::split(&mut paid_balance, fee);
-    transfer::public_transfer(
-        coin::from_balance(fee_payment, ctx),
-        token_launcher::get_admin(launchpad),
-    );
+    token_launcher::add_to_treasury(launchpad, fee_payment);
 
     // Add remaining to real reserve
     balance::join(&mut coin_info.real_sui_reserves, paid_balance);
@@ -159,7 +156,7 @@ public fun buy_tokens_helper<T>(
 
 // === Sell functionality ===
 public fun sell_tokens_helper<T>(
-    launchpad: &token_launcher::Launchpad,
+    launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
     amount: u64,
     ctx: &mut TxContext,
@@ -190,11 +187,8 @@ public fun sell_tokens_helper<T>(
     let fee_payment = balance::split(&mut coin_info.real_sui_reserves, fee);
     let return_payment = balance::split(&mut coin_info.real_sui_reserves, final_return_cost);
 
-    // Transfer fee to admin
-    transfer::public_transfer(
-        coin::from_balance(fee_payment, ctx),
-        token_launcher::get_admin(launchpad),
-    );
+    // Transfer fee to treasury
+    token_launcher::add_to_treasury(launchpad, fee_payment);
 
     let return_coin = coin::from_balance(return_payment, ctx);
     (return_cost, return_coin)
@@ -256,7 +250,8 @@ public fun create_coin_internal<T>(
     };
 
     // Transfer the fee
-    transfer::public_transfer(payment, token_launcher::get_admin(launchpad));
+    let paid_balance = coin::into_balance(payment);
+    token_launcher::add_to_treasury(launchpad, paid_balance);
 
     // Wrap the treasury cap in the protected structure
     let mut protected_cap = ProtectedTreasuryCap<T> {
@@ -350,7 +345,7 @@ public entry fun create_coin<T>(
 }
 
 public entry fun buy_tokens<T>(
-    launchpad: &token_launcher::Launchpad,
+    launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
     payment: Coin<SUI>,
     sui_amount: u64,
@@ -402,7 +397,7 @@ public entry fun buy_tokens<T>(
 }
 
 public entry fun sell_tokens<T>(
-    launchpad: &token_launcher::Launchpad,
+    launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
     tokens: Coin<T>,
     ctx: &mut TxContext,
@@ -479,7 +474,7 @@ public entry fun create_coin_for_br<T>(
 }
 
 public entry fun buy_tokens_with_br<T>(
-    launchpad: &token_launcher::Launchpad,
+    launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
     payment: &mut Coin<SUI>,
     sui_amount: u64,
@@ -535,11 +530,7 @@ public entry fun buy_tokens_with_br<T>(
 
     // Split and transfer fee
     let fee_payment = balance::split(&mut paid_balance, fee);
-
-    transfer::public_transfer(
-        coin::from_balance(fee_payment, ctx),
-        token_launcher::get_admin(launchpad),
-    );
+    token_launcher::add_to_treasury(launchpad, fee_payment);
 
     // Add remaining to real reserve
     balance::join(&mut coin_info.real_sui_reserves, paid_balance);
@@ -582,7 +573,7 @@ public entry fun buy_tokens_with_br<T>(
 }
 
 public entry fun sell_tokens_with_br<T>(
-    launchpad: &token_launcher::Launchpad,
+    launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
     tokens: Coin<T>,
     br: &mut BattleRoyale,
@@ -637,11 +628,8 @@ public entry fun sell_tokens_with_br<T>(
         };
     };
 
-    // Transfer fee to admin
-    transfer::public_transfer(
-        coin::from_balance(fee_payment, ctx),
-        token_launcher::get_admin(launchpad),
-    );
+    // Transfer fee to treasury
+    token_launcher::add_to_treasury(launchpad, fee_payment);
 
     let return_coin = coin::from_balance(return_payment, ctx);
 

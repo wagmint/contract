@@ -497,6 +497,7 @@ public fun contribute_trade_fee(
 // This is a complex function that would need integration with an oracle or indexer
 // For this example, we'll assume we have winner addresses determined externally
 public entry fun finalize_battle_royale(
+    launchpad: &mut token_launcher::Launchpad,
     br: &mut BattleRoyale,
     first_place_coin_address: address,
     second_place_coin_address: address,
@@ -545,7 +546,8 @@ public entry fun finalize_battle_royale(
     // Pay admin fee
     if (platform_fee > 0) {
         let admin_payment = coin::take(&mut br.prize_pool, platform_fee, ctx);
-        transfer::public_transfer(admin_payment, br.admin);
+        let admin_payment_balance = coin::into_balance(admin_payment);
+        token_launcher::add_to_treasury(launchpad, admin_payment_balance);
     };
 
     // Get creators of winning coins

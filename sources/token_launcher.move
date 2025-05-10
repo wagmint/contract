@@ -1,6 +1,9 @@
 module wagmint::token_launcher;
 
+use sui::balance::{Self, Balance};
+use sui::coin;
 use sui::event;
+use sui::sui::SUI;
 
 // Constants
 const PLATFORM_FEE_BPS: u64 = 100; // 1%
@@ -12,6 +15,10 @@ const CURRENT_VERSION: u64 = 1;
 const DEFAULT_INITIAL_VIRTUAL_SUI: u64 = 2_500_000_000_000; // 2500 SUI
 const DEFAULT_INITIAL_VIRTUAL_TOKENS: u64 = 1_000_000_000_000_000; // 1B SUI
 const DEFAULT_TOKEN_DECIMALS: u8 = 6;
+
+// Error codes
+const E_NOT_ADMIN: u64 = 0;
+const E_INSUFFICIENT_BALANCE: u64 = 1;
 
 public struct Configuration has copy, store {
     version: u64,
@@ -27,6 +34,7 @@ public struct Launchpad has key, store {
     id: UID,
     admin: address,
     launched_coins_count: u64,
+    treasury: Balance<SUI>,
     config: Configuration,
 }
 
@@ -59,8 +67,6 @@ public struct ConfigurationUpdatedEvent has copy, drop {
     new_token_decimals: u8,
 }
 
-const E_NOT_ADMIN: u64 = 0;
-
 fun init(ctx: &mut TxContext) {
     let config = Configuration {
         version: CURRENT_VERSION,
@@ -80,6 +86,7 @@ fun init(ctx: &mut TxContext) {
         id: object::new(ctx),
         admin: tx_context::sender(ctx),
         launched_coins_count: 0,
+        treasury: balance::zero<SUI>(),
         config: config,
     };
 
@@ -157,6 +164,57 @@ public entry fun update_launchpad_config(
     });
 }
 
+// Add admin function to withdraw fees
+public entry fun withdraw_treasury(
+    launchpad: &mut Launchpad,
+    amount: u64,
+    to_address: address,
+    ctx: &mut TxContext,
+) {
+    // Only admin can withdraw
+    assert!(launchpad.admin == tx_context::sender(ctx), E_NOT_ADMIN);
+
+    // Check if we have enough balance
+    let treasury_balance = balance::value(&launchpad.treasury);
+    assert!(treasury_balance >= amount, E_INSUFFICIENT_BALANCE);
+
+    // Split and transfer the requested amount
+    let withdraw_balance = balance::split(&mut launchpad.treasury, amount);
+    transfer::public_transfer(
+        coin::from_balance(withdraw_balance, ctx),
+        to_address,
+    );
+}
+
+// Function to withdraw all funds
+public entry fun withdraw_all_treasury(
+    launchpad: &mut Launchpad,
+    to_address: address,
+    ctx: &mut TxContext,
+) {
+    // Only admin can withdraw
+    assert!(launchpad.admin == tx_context::sender(ctx), E_NOT_ADMIN);
+
+    // Get current treasury balance
+    let treasury_balance = balance::value(&launchpad.treasury);
+    
+    // Skip if nothing to withdraw
+    if (treasury_balance == 0) {
+        return
+    };
+
+    // Take all funds and transfer
+    let withdraw_balance = balance::split(&mut launchpad.treasury, treasury_balance);
+    transfer::public_transfer(
+        coin::from_balance(withdraw_balance, ctx),
+        to_address,
+    );
+}
+
+public fun add_to_treasury(launchpad: &mut Launchpad, payment: Balance<SUI>) {
+    balance::join(&mut launchpad.treasury, payment);
+}
+
 public fun increment_coins_count(launchpad: &mut Launchpad) {
     launchpad.launched_coins_count = launchpad.launched_coins_count + 1;
 }
@@ -208,6 +266,10 @@ public fun get_token_decimals(launchpad: &Launchpad): u8 {
 
 public fun get_version(launchpad: &Launchpad): u64 {
     launchpad.config.version
+}
+
+public fun get_treasury(launchpad: &Launchpad): &Balance<SUI> {
+    &launchpad.treasury
 }
 
 // Add test helper function
