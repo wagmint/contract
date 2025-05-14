@@ -168,6 +168,7 @@ fun test_participant_registration_and_coin_creation() {
         // Take the BR address from holder
         let address_holder = test_scenario::take_from_address<AddressHolder>(&scenario, ADMIN);
         let br_address = address_holder.br_address;
+        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
 
         // Take the BR
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
@@ -183,6 +184,7 @@ fun test_participant_registration_and_coin_creation() {
 
         // Register as participant
         battle_royale::register_participant(
+            &mut launchpad,
             &mut br,
             payment,
             test_scenario::ctx(&mut scenario),
@@ -190,6 +192,7 @@ fun test_participant_registration_and_coin_creation() {
 
         // Verify registration (indirectly, as we can't access the internal table)
         // We'll verify this by creating a coin later
+        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -347,7 +350,6 @@ fun test_finalize_battle_royale_and_claim_prizes() {
         let coin2_address = address_holder.coin2_address;
         let coin3_address = address_holder.coin3_address;
 
-        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
             &scenario,
             object::id_from_address(br_address),
@@ -355,7 +357,6 @@ fun test_finalize_battle_royale_and_claim_prizes() {
 
         // Finalize BR - assign winners
         battle_royale::finalize_battle_royale(
-            &mut launchpad,
             &mut br,
             coin1_address, // USER1 takes first place
             coin2_address, // USER2 takes second place
@@ -367,7 +368,6 @@ fun test_finalize_battle_royale_and_claim_prizes() {
         assert!(battle_royale::is_battle_royale_finalized(&br), 0);
 
         // Return shared objects
-        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -798,6 +798,7 @@ fun test_register_after_br_ends() {
         // Take the BR address from holder
         let address_holder = test_scenario::take_from_address<AddressHolder>(&scenario, ADMIN);
         let br_address = address_holder.br_address;
+        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
 
         // Take the BR
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
@@ -813,12 +814,14 @@ fun test_register_after_br_ends() {
 
         // Try to register as participant after BR ends - should fail
         battle_royale::register_participant(
+            &mut launchpad,
             &mut br,
             payment,
             test_scenario::ctx(&mut scenario),
         );
 
         // Cleanup - won't be reached due to expected failure
+        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -834,6 +837,7 @@ fun setup_participant_with_coin(scenario: &mut Scenario, user: address) {
         // Take the BR address from holder
         let address_holder = test_scenario::take_from_address<AddressHolder>(scenario, ADMIN);
         let br_address = address_holder.br_address;
+        let mut launchpad = test_scenario::take_shared<Launchpad>(scenario);
 
         // Take the BR
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
@@ -849,11 +853,13 @@ fun setup_participant_with_coin(scenario: &mut Scenario, user: address) {
 
         // Register as participant
         battle_royale::register_participant(
+            &mut launchpad,
             &mut br,
             payment,
             test_scenario::ctx(scenario),
         );
 
+        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -919,6 +925,7 @@ fun setup_multiple_participants_and_coins(scenario: &mut Scenario) {
         // Take the BR address from holder
         let address_holder = test_scenario::take_from_address<AddressHolder>(scenario, ADMIN);
         let br_address = address_holder.br_address;
+        let mut launchpad = test_scenario::take_shared<Launchpad>(scenario);
 
         // Take the BR
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
@@ -934,11 +941,13 @@ fun setup_multiple_participants_and_coins(scenario: &mut Scenario) {
 
         // Register as participant
         battle_royale::register_participant(
+            &mut launchpad,
             &mut br,
             payment,
             test_scenario::ctx(scenario),
         );
 
+        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -1003,6 +1012,7 @@ fun setup_multiple_participants_and_coins(scenario: &mut Scenario) {
         // Take the BR address from holder
         let address_holder = test_scenario::take_from_address<AddressHolder>(scenario, ADMIN);
         let br_address = address_holder.br_address;
+        let mut launchpad = test_scenario::take_shared<Launchpad>(scenario);
 
         // Take the BR
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
@@ -1018,11 +1028,13 @@ fun setup_multiple_participants_and_coins(scenario: &mut Scenario) {
 
         // Register as participant
         battle_royale::register_participant(
+            &mut launchpad,
             &mut br,
             payment,
             test_scenario::ctx(scenario),
         );
 
+        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -1094,6 +1106,7 @@ fun test_register_participant_twice() {
         // Take the BR address from holder
         let address_holder = test_scenario::take_from_address<AddressHolder>(&scenario, ADMIN);
         let br_address = address_holder.br_address;
+        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
 
         // Take the BR
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
@@ -1109,11 +1122,13 @@ fun test_register_participant_twice() {
 
         // Register as participant
         battle_royale::register_participant(
+            &mut launchpad,
             &mut br,
             payment,
             test_scenario::ctx(&mut scenario),
         );
 
+        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -1124,6 +1139,7 @@ fun test_register_participant_twice() {
         // Take the BR address from holder
         let address_holder = test_scenario::take_from_address<AddressHolder>(&scenario, ADMIN);
         let br_address = address_holder.br_address;
+        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
 
         // Take the BR
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
@@ -1139,12 +1155,14 @@ fun test_register_participant_twice() {
 
         // Try to register again - should fail
         battle_royale::register_participant(
+            &mut launchpad,
             &mut br,
             payment,
             test_scenario::ctx(&mut scenario),
         );
 
         // Not reached due to expected failure
+        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -1164,6 +1182,7 @@ fun test_register_insufficient_payment() {
         // Take the BR address from holder
         let address_holder = test_scenario::take_from_address<AddressHolder>(&scenario, ADMIN);
         let br_address = address_holder.br_address;
+        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
 
         // Take the BR
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
@@ -1179,12 +1198,14 @@ fun test_register_insufficient_payment() {
 
         // Try to register with insufficient payment - should fail
         battle_royale::register_participant(
+            &mut launchpad,
             &mut br,
             payment,
             test_scenario::ctx(&mut scenario),
         );
 
         // Not reached due to expected failure
+        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -1267,7 +1288,6 @@ fun test_finalize_battle_royale_before_end() {
         let coin2_address = address_holder.coin2_address;
         let coin3_address = address_holder.coin3_address;
 
-        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
             &scenario,
             object::id_from_address(br_address),
@@ -1275,7 +1295,6 @@ fun test_finalize_battle_royale_before_end() {
 
         // Try to finalize BR before it ends - should fail
         battle_royale::finalize_battle_royale(
-            &mut launchpad,
             &mut br,
             coin1_address,
             coin2_address,
@@ -1284,7 +1303,6 @@ fun test_finalize_battle_royale_before_end() {
         );
 
         // Not reached due to expected failure
-        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -1311,7 +1329,6 @@ fun test_finalize_battle_royale_non_admin() {
         let coin2_address = address_holder.coin2_address;
         let coin3_address = address_holder.coin3_address;
 
-        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
             &scenario,
             object::id_from_address(br_address),
@@ -1319,7 +1336,6 @@ fun test_finalize_battle_royale_non_admin() {
 
         // Try to finalize BR as non-admin - should fail
         battle_royale::finalize_battle_royale(
-            &mut launchpad,
             &mut br,
             coin1_address,
             coin2_address,
@@ -1328,7 +1344,6 @@ fun test_finalize_battle_royale_non_admin() {
         );
 
         // Not reached due to expected failure
-        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -1360,7 +1375,6 @@ fun test_claim_prize_twice() {
         let coin2_address = address_holder.coin2_address;
         let coin3_address = address_holder.coin3_address;
 
-        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
             &scenario,
             object::id_from_address(br_address),
@@ -1368,7 +1382,6 @@ fun test_claim_prize_twice() {
 
         // Finalize BR with USER1 as first place
         battle_royale::finalize_battle_royale(
-            &mut launchpad,
             &mut br,
             coin1_address, // USER1 takes first place
             coin2_address, // USER2 takes second place
@@ -1377,7 +1390,6 @@ fun test_claim_prize_twice() {
         );
 
         // Return shared objects
-        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
@@ -1440,7 +1452,6 @@ fun test_claim_prize_wrong_creator() {
         let coin2_address = address_holder.coin2_address;
         let coin3_address = address_holder.coin3_address;
 
-        let mut launchpad = test_scenario::take_shared<Launchpad>(&scenario);
         let mut br = test_scenario::take_shared_by_id<BattleRoyale>(
             &scenario,
             object::id_from_address(br_address),
@@ -1448,7 +1459,6 @@ fun test_claim_prize_wrong_creator() {
 
         // Finalize BR with USER1 as first place
         battle_royale::finalize_battle_royale(
-            &mut launchpad,
             &mut br,
             coin1_address, // USER1 takes first place
             coin2_address, // USER2 takes second place
@@ -1457,7 +1467,6 @@ fun test_claim_prize_wrong_creator() {
         );
 
         // Return shared objects
-        test_scenario::return_shared(launchpad);
         test_scenario::return_shared(br);
         test_scenario::return_to_address(ADMIN, address_holder);
     };
