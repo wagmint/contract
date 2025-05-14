@@ -7,6 +7,7 @@ use sui::event;
 use sui::sui::SUI;
 use sui::table::{Self, Table};
 use wagmint::token_launcher;
+use wagmint::utils;
 
 // Error codes
 const E_NOT_ADMIN: u64 = 0;
@@ -217,7 +218,9 @@ public entry fun register_participant(
     // Transfer fee to platform
     if (br.platform_fee_bps > 0) {
         let fee_amount = balance::value(&fee_balance);
-        let platform_fee = (fee_amount * br.platform_fee_bps) / BPS_DENOMINATOR;
+        let platform_fee = utils::as_u64(
+            utils::percentage_of(utils::from_u64(fee_amount), br.platform_fee_bps),
+        );
         let platform_fee_balance = balance::split(&mut fee_balance, platform_fee);
         token_launcher::add_to_treasury(launchpad, platform_fee_balance);
     };
@@ -538,9 +541,15 @@ public entry fun finalize_battle_royale(
 
     // Calculate prize amounts
     let total_prize = balance::value(&br.prize_pool);
-    let first_prize = (total_prize * br.first_place_bps) / BPS_DENOMINATOR;
-    let second_prize = (total_prize * br.second_place_bps) / BPS_DENOMINATOR;
-    let third_prize = (total_prize * br.third_place_bps) / BPS_DENOMINATOR;
+    let first_prize = utils::as_u64(
+        utils::percentage_of(utils::from_u64(total_prize), br.first_place_bps),
+    );
+    let second_prize = utils::as_u64(
+        utils::percentage_of(utils::from_u64(total_prize), br.second_place_bps),
+    );
+    let third_prize = utils::as_u64(
+        utils::percentage_of(utils::from_u64(total_prize), br.third_place_bps),
+    );
     // Verify that all shares add up to total (optional safety check)
     assert!(first_prize + second_prize + third_prize <= total_prize, E_INVALID_SHARES);
 

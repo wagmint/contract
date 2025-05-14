@@ -9,6 +9,7 @@ use sui::url::{Self, Url};
 use wagmint::battle_royale::{Self, BattleRoyale};
 use wagmint::bonding_curve;
 use wagmint::token_launcher::{Self, LaunchedCoinsRegistry};
+use wagmint::utils;
 
 // Error codes
 const E_INVALID_NAME_LENGTH: u64 = 0;
@@ -23,9 +24,6 @@ const E_BATTLE_ROYALE_NOT_ACTIVE_FOR_TRADE: u64 = 7;
 const MAX_NAME_LENGTH: u64 = 32;
 const MAX_SYMBOL_LENGTH: u64 = 10;
 const MIN_TRADE_AMOUNT: u64 = 1;
-
-// Constants
-const BPS_DENOMINATOR: u64 = 10000;
 
 // Protected version of the treasury cap
 public struct ProtectedTreasuryCap<phantom T> has store {
@@ -94,7 +92,7 @@ public struct TradeEvent has copy, drop {
 
 // Calculate transaction fee
 public fun calculate_transaction_fee(amount: u64, transaction_fee_bps: u64): u64 {
-    (amount * transaction_fee_bps) / BPS_DENOMINATOR
+    utils::as_u64(utils::percentage_of(utils::from_u64(amount), transaction_fee_bps))
 }
 
 // === Buy functionality ===
@@ -527,7 +525,7 @@ public entry fun buy_tokens_with_br<T>(
 
     // Calculate BR fee
     let br_fee_bps = battle_royale::get_br_fee_bps(br);
-    let br_fee = (fee * br_fee_bps) / BPS_DENOMINATOR;
+    let br_fee = utils::as_u64(utils::percentage_of(utils::from_u64(fee), br_fee_bps));
     if (
         battle_royale::is_coin_valid_for_battle_royale(br, coin_address, current_epoch) && br_fee > 0
     ) {
@@ -628,7 +626,8 @@ public entry fun sell_tokens_with_br<T>(
 
     // If valid BR, collect fees
     let br_fee_bps = battle_royale::get_br_fee_bps(br);
-    let br_fee = (fee * br_fee_bps) / BPS_DENOMINATOR;
+    let br_fee = utils::as_u64(utils::percentage_of(utils::from_u64(fee), br_fee_bps));
+
     if (
         battle_royale::is_coin_valid_for_battle_royale(br, coin_address, current_epoch) && br_fee > 0
     ) {
@@ -699,7 +698,9 @@ public fun get_current_price<T>(coin_info: &CoinInfo<T>): u64 {
 public fun calculate_market_cap<T>(coin_info: &CoinInfo<T>): u64 {
     let price = get_current_price(coin_info);
     let total_tokens = coin_info.virtual_token_reserves;
-    let fully_diluted_market_cap = price * total_tokens;
+    let fully_diluted_market_cap = utils::as_u64(
+        utils::mul(utils::from_u64(price), utils::from_u64(total_tokens)),
+    );
 
     // Return the fully diluted market cap (like pump.fun)
     fully_diluted_market_cap

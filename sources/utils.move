@@ -3,6 +3,8 @@ module wagmint::utils;
 use std::ascii;
 use std::string;
 
+const BPS_DENOMINATOR: u64 = 10000;
+
 // High precision representation of numbers
 // We use u128 for increased precision in calculations
 // For very large numbers, we could extend this to handle even larger values
@@ -55,7 +57,7 @@ public fun sub(a: u128, b: u128): u128 {
 public fun percentage_of(value: u128, bps: u64): u128 {
     div(
         mul(value, from_u64(bps)),
-        from_u64(10000),
+        from_u64(BPS_DENOMINATOR),
     )
 }
 
