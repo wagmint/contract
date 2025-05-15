@@ -77,16 +77,6 @@ create-coin-br:
 			"null" \
 			"" \
 		--gas-budget 100000000
-# public entry fun create_default_battle_royale(
-#     launchpad: &token_launcher::Launchpad,
-#     name: String,
-#     description: String,
-#     start_time: u64,
-#     end_time: u64,
-#     initial_prize: Coin<SUI>,
-#     ctx: &mut TxContext,
-# )
-
 create-br:
 	@sui client call \
 		--package $(PACKAGE_ID) \
