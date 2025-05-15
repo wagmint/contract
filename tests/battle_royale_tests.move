@@ -21,7 +21,6 @@ const USER4: address = @0xB3B;
 // Constants for BR configuration
 const BR_NAME: vector<u8> = b"Test Battle Royale";
 const BR_DESCRIPTION: vector<u8> = b"A test battle royale for unit testing";
-const BR_INITIAL_PRIZE: u64 = 10_000_000_000; // 10 SUI
 const BR_START_TIME: u64 = 1; // epoch 0
 const BR_END_TIME: u64 = 2; // epoch 1
 const BR_PARTICIPATION_FEE: u64 = 5_000_000_000; // 5 SUI
@@ -68,12 +67,6 @@ fun test_init_internal(scenario: &mut Scenario) {
     {
         let launchpad = test_scenario::take_shared<Launchpad>(scenario);
 
-        // Create initial prize coin
-        let initial_prize = coin::mint_for_testing<SUI>(
-            BR_INITIAL_PRIZE,
-            test_scenario::ctx(scenario),
-        );
-
         // Call create_battle_royale
         battle_royale::create_battle_royale(
             &launchpad,
@@ -81,7 +74,6 @@ fun test_init_internal(scenario: &mut Scenario) {
             string::utf8(BR_DESCRIPTION),
             BR_START_TIME,
             BR_END_TIME,
-            initial_prize,
             BR_MAX_COINS_PER_PARTICIPANT,
             BR_MID_BATTLE_REGISTRATION_ENABLED,
             BR_PARTICIPATION_FEE,
@@ -120,7 +112,7 @@ fun test_init_internal(scenario: &mut Scenario) {
         assert_eq(admin, ADMIN);
         assert_eq(start_time, BR_START_TIME);
         assert_eq(end_time, BR_END_TIME);
-        assert_eq(prize_pool, BR_INITIAL_PRIZE);
+        assert_eq(prize_pool, 0);
         assert_eq(participation_fee, BR_PARTICIPATION_FEE);
         assert_eq(is_finalized, false);
         assert_eq(is_cancelled, false);
@@ -1582,12 +1574,6 @@ fun test_default_battle_royale_creation() {
     {
         let launchpad = test_scenario::take_shared<Launchpad>(&scenario);
 
-        // Create initial prize coin
-        let initial_prize = coin::mint_for_testing<SUI>(
-            BR_INITIAL_PRIZE,
-            test_scenario::ctx(&mut scenario),
-        );
-
         // Call create_default_battle_royale
         battle_royale::create_default_battle_royale(
             &launchpad,
@@ -1595,7 +1581,6 @@ fun test_default_battle_royale_creation() {
             string::utf8(BR_DESCRIPTION),
             BR_START_TIME,
             BR_END_TIME,
-            initial_prize,
             test_scenario::ctx(&mut scenario),
         );
         test_scenario::return_shared(launchpad);

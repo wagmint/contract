@@ -493,7 +493,11 @@ public entry fun buy_tokens_with_br<T>(
 ) {
     let current_epoch = tx_context::epoch(ctx);
     assert!(
-        battle_royale::is_battle_royale_open(br, current_epoch),
+        battle_royale::is_coin_valid_for_battle_royale(
+            br,
+            object::uid_to_address(&coin_info.id),
+            current_epoch,
+        ),
         E_BATTLE_ROYALE_NOT_ACTIVE_FOR_TRADE,
     );
 

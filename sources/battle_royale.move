@@ -25,12 +25,12 @@ const E_INVALID_SHARES: u64 = 11;
 
 // Constants
 const BPS_DENOMINATOR: u64 = 10000;
+const DEFAULT_PLATFORM_FEE_BPS: u64 = 1000; // 10% of participation fee goes to platform
 const DEFAULT_BR_FEE_BPS: u64 = 5000; // 50% of regular trading fees go to BR
-const DEFAULT_PARTICIPATION_FEE: u64 = 5_000_000_000; // 5 SUI
+const DEFAULT_PARTICIPATION_FEE: u64 = 100_000_000; // 0.1 SUI
 const DEFAULT_FIRST_PLACE_BPS: u64 = 5500; // 55%
-const DEFAULT_SECOND_PLACE_BPS: u64 = 2500; // 25%
+const DEFAULT_SECOND_PLACE_BPS: u64 = 3000; // 30%
 const DEFAULT_THIRD_PLACE_BPS: u64 = 1500; // 15%
-const DEFAULT_PLATFORM_FEE_BPS: u64 = 500; // 5%
 const DEFAULT_MAX_COINS_PER_PARTICIPANT: u64 = 1; // Max coins per participant
 const DEFAULT_MID_BATTLE_REGISTRATION_ENABLED: bool = false; // Mid-battle registration disabled by default
 
@@ -215,7 +215,7 @@ public entry fun register_participant(
     };
     let mut fee_balance = coin::into_balance(payment);
 
-    // Transfer fee to platform
+    // Transfer % of fee to platform, if any
     if (br.platform_fee_bps > 0) {
         let fee_amount = balance::value(&fee_balance);
         let platform_fee = utils::as_u64(
@@ -283,7 +283,6 @@ public entry fun create_default_battle_royale(
     description: String,
     start_time: u64,
     end_time: u64,
-    initial_prize: Coin<SUI>,
     ctx: &mut TxContext,
 ) {
     create_battle_royale(
@@ -292,7 +291,6 @@ public entry fun create_default_battle_royale(
         description,
         start_time,
         end_time,
-        initial_prize,
         DEFAULT_MAX_COINS_PER_PARTICIPANT,
         DEFAULT_MID_BATTLE_REGISTRATION_ENABLED,
         DEFAULT_PARTICIPATION_FEE,
@@ -312,7 +310,6 @@ public entry fun create_battle_royale(
     description: String,
     start_time: u64,
     end_time: u64,
-    initial_prize: Coin<SUI>,
     max_coins_per_participant: u64,
     mid_battle_registration_enabled: bool,
     participation_fee: u64,
@@ -331,14 +328,11 @@ public entry fun create_battle_royale(
 
     // Validate prize distribution adds up to 10000 BPS (100%)
     assert!(
-        first_place_bps + second_place_bps + third_place_bps + platform_fee_bps == BPS_DENOMINATOR,
+        first_place_bps + second_place_bps + third_place_bps == BPS_DENOMINATOR,
         E_INVALID_TIME,
     );
 
     // Create BR object
-    let initial_prize_amount = coin::value(&initial_prize);
-    let prize_pool = coin::into_balance(initial_prize);
-
     let br = BattleRoyale {
         id: object::new(ctx),
         admin: tx_context::sender(ctx),
@@ -346,7 +340,7 @@ public entry fun create_battle_royale(
         description,
         start_time,
         end_time,
-        prize_pool,
+        prize_pool: balance::zero<SUI>(),
         participant_to_coins: table::new(ctx),
         coin_to_participant: table::new(ctx),
         max_coins_per_participant,
@@ -371,7 +365,7 @@ public entry fun create_battle_royale(
         description,
         start_time,
         end_time,
-        initial_prize_pool: initial_prize_amount,
+        initial_prize_pool: 0,
         participation_fee,
         br_fee_bps,
         first_place_bps,
@@ -403,9 +397,13 @@ public entry fun update_battle_royale(
 
     // Validate prize distribution adds up to 10000 BPS (100%)
     assert!(
-        first_place_bps + second_place_bps + third_place_bps + platform_fee_bps == BPS_DENOMINATOR,
+        first_place_bps + second_place_bps + third_place_bps == BPS_DENOMINATOR,
         E_INVALID_SHARES,
     );
+
+    // Ensure BR is not finalized or cancelled
+    assert!(!br.is_finalized && !br.is_cancelled, E_BR_NOT_OPEN);
+    assert!(tx_context::epoch(ctx) < br.end_time, E_BR_NOT_OPEN);
 
     let old_max_coins_per_participant = br.max_coins_per_participant;
     let old_mid_battle_registration_enabled = br.mid_battle_registration_enabled;
