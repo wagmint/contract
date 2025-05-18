@@ -58,6 +58,41 @@ sell-tokens:
 			$(COIN_INFO_ID) \
 			$(TOKEN_COIN_ID) \
 		--gas-budget 100000000
+create-coin-br:
+	@sui client call \
+		--package $(PACKAGE_ID) \
+		--module coin_manager \
+		--function create_coin \
+		--type-args $(COIN_TYPE) \
+		--args \
+			$(LAUNCHPAD_ID) \
+			$(TREASURY_CAP_ID) \
+			$(REGISTRY_ID) \
+			$(PAYMENT_COIN_ID) \
+			"My Token" \
+			"MTK" \
+			"This is my awesome token description" \
+			"https://mytoken.com" \
+			"https://example.com/image.png" \
+			"null" \
+			"" \
+		--gas-budget 100000000
+create-br:
+	@sui client call \
+		--package $(PACKAGE_ID) \
+		--module battle_royale \
+		--function create_default_battle_royale \
+		--type-args $(COIN_TYPE) \
+		--args \
+			$(LAUNCHPAD_ID) \
+			$(PAYMENT_COIN_ID) \
+			"name" \
+			"desc" \
+			"starttime" \
+			"endtime" \
+			$(AMOUNT) \
+			"" \
+		--gas-budget 100000000
 upgrade:
 	@sui client upgrade \
 		--upgrade-capability $(UPGRADE_CAP_ID) 

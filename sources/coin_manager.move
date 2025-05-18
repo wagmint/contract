@@ -9,6 +9,7 @@ use sui::url::{Self, Url};
 use wagmint::battle_royale::{Self, BattleRoyale};
 use wagmint::bonding_curve;
 use wagmint::token_launcher::{Self, LaunchedCoinsRegistry};
+use wagmint::utils;
 
 // Error codes
 const E_INVALID_NAME_LENGTH: u64 = 0;
@@ -23,9 +24,6 @@ const E_BATTLE_ROYALE_NOT_ACTIVE_FOR_TRADE: u64 = 7;
 const MAX_NAME_LENGTH: u64 = 32;
 const MAX_SYMBOL_LENGTH: u64 = 10;
 const MIN_TRADE_AMOUNT: u64 = 1;
-
-// Constants
-const BPS_DENOMINATOR: u64 = 10000;
 
 // Protected version of the treasury cap
 public struct ProtectedTreasuryCap<phantom T> has store {
@@ -66,7 +64,10 @@ public struct CoinCreatedEvent has copy, drop {
     launch_time: u64,
     virtual_sui_reserves: u64,
     virtual_token_reserves: u64,
+    real_sui_reserves: u64,
+    real_token_reserves: u64,
     token_decimals: u8,
+    br_address: Option<address>,
 }
 
 public struct TradeEvent has copy, drop {
@@ -75,10 +76,14 @@ public struct TradeEvent has copy, drop {
     user_address: address,
     token_amount: u64,
     sui_amount: u64,
+    platform_fee_amount: u64,
+    battle_royale_fee_amount: u64,
     new_supply: u64,
     new_price: u64,
     new_virtual_sui_reserves: u64,
     new_virtual_token_reserves: u64,
+    new_real_sui_reserves: u64,
+    new_real_token_reserves: u64,
 }
 
 // public struct TokenGraduatedEvent has copy, drop {
@@ -91,7 +96,7 @@ public struct TradeEvent has copy, drop {
 
 // Calculate transaction fee
 public fun calculate_transaction_fee(amount: u64, transaction_fee_bps: u64): u64 {
-    (amount * transaction_fee_bps) / BPS_DENOMINATOR
+    utils::as_u64(utils::percentage_of(utils::from_u64(amount), transaction_fee_bps))
 }
 
 // === Buy functionality ===
@@ -102,7 +107,7 @@ public fun buy_tokens_helper<T>(
     mut payment: Coin<SUI>,
     amount: u64,
     ctx: &mut TxContext,
-): u64 {
+): (u64, u64) {
     // Ensure the token hasn't graduated yet
     assert!(!coin_info.graduated, E_ALREADY_GRADUATED);
 
@@ -151,7 +156,7 @@ public fun buy_tokens_helper<T>(
     // ) {
     //     graduate_token(coin_info, ctx);
     // };
-    tokens_to_mint
+    (tokens_to_mint, fee)
 }
 
 // === Sell functionality ===
@@ -160,7 +165,7 @@ public fun sell_tokens_helper<T>(
     coin_info: &mut CoinInfo<T>,
     amount: u64,
     ctx: &mut TxContext,
-): (u64, Coin<SUI>) {
+): (u64, Coin<SUI>, u64) {
     // Ensure the token hasn't graduated yet
     assert!(!coin_info.graduated, E_ALREADY_GRADUATED);
 
@@ -191,7 +196,7 @@ public fun sell_tokens_helper<T>(
     token_launcher::add_to_treasury(launchpad, fee_payment);
 
     let return_coin = coin::from_balance(return_payment, ctx);
-    (return_cost, return_coin)
+    (return_cost, return_coin, fee)
 }
 
 // Graduate token to DEX
@@ -223,6 +228,7 @@ public fun create_coin_internal<T>(
     description: String,
     website: String,
     image_url: String,
+    br_address: Option<address>,
     ctx: &mut TxContext,
 ): address {
     // Validate inputs
@@ -304,7 +310,10 @@ public fun create_coin_internal<T>(
         launch_time: tx_context::epoch(ctx),
         virtual_sui_reserves: coin_info.virtual_sui_reserves,
         virtual_token_reserves: coin_info.virtual_token_reserves,
+        real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+        real_token_reserves: balance::value(&coin_info.real_token_reserves),
         token_decimals,
+        br_address,
     });
 
     token_launcher::increment_coins_count(launchpad);
@@ -340,6 +349,7 @@ public entry fun create_coin<T>(
         description,
         website,
         image_url,
+        option::none(),
         ctx,
     )
 }
@@ -355,7 +365,7 @@ public entry fun buy_tokens<T>(
     assert!(sui_amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
 
     // Use the bonding curve to calculate tokens and process payment
-    let tokens_to_mint = buy_tokens_helper(
+    let (tokens_to_mint, platform_fee_amount) = buy_tokens_helper(
         launchpad,
         coin_info,
         payment,
@@ -389,10 +399,14 @@ public entry fun buy_tokens<T>(
         user_address: tx_context::sender(ctx),
         token_amount: tokens_to_mint,
         sui_amount: sui_amount,
+        platform_fee_amount,
+        battle_royale_fee_amount: 0,
         new_supply: coin_info.supply,
         new_price,
         new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
+        new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+        new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
     });
 }
 
@@ -405,7 +419,7 @@ public entry fun sell_tokens<T>(
     let token_amount = coin::value(&tokens);
 
     // Process the sell operation using bonding curve
-    let (sui_amount, return_coin) = sell_tokens_helper(
+    let (sui_amount, return_coin, platform_fee_amount) = sell_tokens_helper(
         launchpad,
         coin_info,
         token_amount,
@@ -434,10 +448,14 @@ public entry fun sell_tokens<T>(
         user_address: tx_context::sender(ctx),
         token_amount: token_amount,
         sui_amount: sui_amount,
+        platform_fee_amount,
+        battle_royale_fee_amount: 0,
         new_supply: coin_info.supply,
         new_price,
         new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
+        new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+        new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
     });
 }
 
@@ -455,6 +473,7 @@ public entry fun create_coin_for_br<T>(
     image_url: String,
     ctx: &mut TxContext,
 ): address {
+    let br_address = battle_royale::get_address(battle_royale);
     let coin_address = create_coin_internal(
         launchpad,
         treasury_cap,
@@ -465,6 +484,7 @@ public entry fun create_coin_for_br<T>(
         description,
         website,
         image_url,
+        option::some(br_address),
         ctx,
     );
 
@@ -483,7 +503,11 @@ public entry fun buy_tokens_with_br<T>(
 ) {
     let current_epoch = tx_context::epoch(ctx);
     assert!(
-        battle_royale::is_battle_royale_open(br, current_epoch),
+        battle_royale::is_coin_valid_for_battle_royale(
+            br,
+            object::uid_to_address(&coin_info.id),
+            current_epoch,
+        ),
         E_BATTLE_ROYALE_NOT_ACTIVE_FOR_TRADE,
     );
 
@@ -513,19 +537,18 @@ public entry fun buy_tokens_with_br<T>(
     let paid = coin::split(payment, total_cost, ctx);
     let mut paid_balance = coin::into_balance(paid);
 
-    if (battle_royale::is_coin_valid_for_battle_royale(br, coin_address, current_epoch)) {
-        // Calculate BR fee
-        let br_fee_bps = battle_royale::get_br_fee_bps(br);
-        let br_fee = (fee * br_fee_bps) / BPS_DENOMINATOR;
+    // Calculate BR fee
+    let br_fee_bps = battle_royale::get_br_fee_bps(br);
+    let br_fee = utils::as_u64(utils::percentage_of(utils::from_u64(fee), br_fee_bps));
+    if (
+        battle_royale::is_coin_valid_for_battle_royale(br, coin_address, current_epoch) && br_fee > 0
+    ) {
+        // Create BR fee payment
+        let br_fee_payment = balance::split(&mut paid_balance, br_fee);
+        fee = fee - br_fee;
 
-        if (br_fee > 0) {
-            // Create BR fee payment
-            let br_fee_payment = balance::split(&mut paid_balance, br_fee);
-            fee = fee - br_fee;
-
-            // Contribute fee to BR
-            battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, ctx);
-        };
+        // Contribute fee to BR
+        battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, ctx);
     };
 
     // Split and transfer fee
@@ -565,10 +588,14 @@ public entry fun buy_tokens_with_br<T>(
         user_address: tx_context::sender(ctx),
         token_amount: tokens_to_mint,
         sui_amount,
+        platform_fee_amount: fee,
+        battle_royale_fee_amount: br_fee,
         new_supply: coin_info.supply,
         new_price,
         new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
+        new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+        new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
     });
 }
 
@@ -614,18 +641,17 @@ public entry fun sell_tokens_with_br<T>(
     let return_payment = balance::split(&mut coin_info.real_sui_reserves, final_return_cost);
 
     // If valid BR, collect fees
-    if (battle_royale::is_coin_valid_for_battle_royale(br, coin_address, current_epoch)) {
-        // Calculate BR fee
-        let br_fee_bps = battle_royale::get_br_fee_bps(br);
-        let br_fee = (fee * br_fee_bps) / BPS_DENOMINATOR;
+    let br_fee_bps = battle_royale::get_br_fee_bps(br);
+    let br_fee = utils::as_u64(utils::percentage_of(utils::from_u64(fee), br_fee_bps));
 
-        if (br_fee > 0) {
-            // Create BR fee payment
-            let br_fee_payment = balance::split(&mut fee_payment, br_fee);
+    if (
+        battle_royale::is_coin_valid_for_battle_royale(br, coin_address, current_epoch) && br_fee > 0
+    ) {
+        // Create BR fee payment
+        let br_fee_payment = balance::split(&mut fee_payment, br_fee);
 
-            // Contribute fee to BR
-            battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, ctx);
-        };
+        // Contribute fee to BR
+        battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, ctx);
     };
 
     // Transfer fee to treasury
@@ -655,10 +681,14 @@ public entry fun sell_tokens_with_br<T>(
         user_address: tx_context::sender(ctx),
         token_amount: token_amount,
         sui_amount: return_cost,
+        platform_fee_amount: fee,
+        battle_royale_fee_amount: br_fee,
         new_supply: coin_info.supply,
         new_price,
         new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
+        new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+        new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
     });
 }
 
@@ -686,7 +716,9 @@ public fun get_current_price<T>(coin_info: &CoinInfo<T>): u64 {
 public fun calculate_market_cap<T>(coin_info: &CoinInfo<T>): u64 {
     let price = get_current_price(coin_info);
     let total_tokens = coin_info.virtual_token_reserves;
-    let fully_diluted_market_cap = price * total_tokens;
+    let fully_diluted_market_cap = utils::as_u64(
+        utils::mul(utils::from_u64(price), utils::from_u64(total_tokens)),
+    );
 
     // Return the fully diluted market cap (like pump.fun)
     fully_diluted_market_cap

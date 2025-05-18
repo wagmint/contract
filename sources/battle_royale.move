@@ -7,6 +7,7 @@ use sui::event;
 use sui::sui::SUI;
 use sui::table::{Self, Table};
 use wagmint::token_launcher;
+use wagmint::utils;
 
 // Error codes
 const E_NOT_ADMIN: u64 = 0;
@@ -24,12 +25,12 @@ const E_INVALID_SHARES: u64 = 11;
 
 // Constants
 const BPS_DENOMINATOR: u64 = 10000;
+const DEFAULT_PLATFORM_FEE_BPS: u64 = 1000; // 10% of participation fee goes to platform
 const DEFAULT_BR_FEE_BPS: u64 = 5000; // 50% of regular trading fees go to BR
-const DEFAULT_PARTICIPATION_FEE: u64 = 5_000_000_000; // 5 SUI
+const DEFAULT_PARTICIPATION_FEE: u64 = 100_000_000; // 0.1 SUI
 const DEFAULT_FIRST_PLACE_BPS: u64 = 5500; // 55%
-const DEFAULT_SECOND_PLACE_BPS: u64 = 2500; // 25%
+const DEFAULT_SECOND_PLACE_BPS: u64 = 3000; // 30%
 const DEFAULT_THIRD_PLACE_BPS: u64 = 1500; // 15%
-const DEFAULT_PLATFORM_FEE_BPS: u64 = 500; // 5%
 const DEFAULT_MAX_COINS_PER_PARTICIPANT: u64 = 1; // Max coins per participant
 const DEFAULT_MID_BATTLE_REGISTRATION_ENABLED: bool = false; // Mid-battle registration disabled by default
 
@@ -51,7 +52,7 @@ public struct BattleRoyale has key {
     first_place_bps: u64, // BPS of prize pool for first place
     second_place_bps: u64, // BPS of prize pool for second place
     third_place_bps: u64, // BPS of prize pool for third place
-    platform_fee_bps: u64, // BPS of prize pool for platform fee
+    platform_fee_bps: u64, // BPS of participation fee that goes to the platform
     is_finalized: bool, // whether prizes have been distributed
     is_cancelled: bool, // whether BR was cancelled
 }
@@ -79,10 +80,13 @@ public struct WinnerRegistryCreatedEvent has copy, drop {
     br_address: address,
     registry_address: address,
     first_place_user_address: address,
+    first_place_coin_address: address,
     first_place_amount: u64,
     second_place_user_address: address,
+    second_place_coin_address: address,
     second_place_amount: u64,
     third_place_user_address: address,
+    third_place_coin_address: address,
     third_place_amount: u64,
     total_prize_pool: u64,
 }
@@ -113,6 +117,8 @@ public struct BattleRoyaleCreatedEvent has copy, drop {
     second_place_bps: u64,
     third_place_bps: u64,
     platform_fee_bps: u64,
+    max_coins_per_participant: u64,
+    mid_battle_registration_enabled: bool,
 }
 
 public struct BattleRoyaleCancelledEvent has copy, drop {
@@ -125,14 +131,12 @@ public struct ParticipantRegisteredEvent has copy, drop {
     br_address: address,
     participant: address,
     participation_fee: u64,
-    registration_time: u64,
 }
 
 public struct CoinRegisteredEvent has copy, drop {
     br_address: address,
     coin_address: address,
     participant: address,
-    registration_time: u64,
 }
 
 public struct PrizePoolContributionEvent has copy, drop {
@@ -144,17 +148,13 @@ public struct PrizePoolContributionEvent has copy, drop {
 
 public struct BattleRoyaleFinalizedEvent has copy, drop {
     br_address: address,
-    first_place: address,
-    first_place_amount: u64,
-    second_place: address,
-    second_place_amount: u64,
-    third_place: address,
-    third_place_amount: u64,
     total_prize_pool: u64,
+    admin: address,
 }
 
 public struct BattleRoyaleUpdatedEvent has copy, drop {
     br_address: address,
+    admin: address,
     old_max_coins_per_participant: u64,
     new_max_coins_per_participant: u64,
     old_mid_battle_registration_enabled: bool,
@@ -182,6 +182,7 @@ public struct TradeFeeToBREvent has copy, drop {
 
 // Function to register a participant in a BR
 public entry fun register_participant(
+    launchpad: &mut token_launcher::Launchpad,
     br: &mut BattleRoyale,
     mut payment: Coin<SUI>,
     ctx: &mut TxContext,
@@ -212,7 +213,17 @@ public entry fun register_participant(
         let excess_payment = coin::split(&mut payment, payment_amount - br.participation_fee, ctx);
         transfer::public_transfer(excess_payment, tx_context::sender(ctx));
     };
-    let fee_balance = coin::into_balance(payment);
+    let mut fee_balance = coin::into_balance(payment);
+
+    // Transfer % of fee to platform, if any
+    if (br.platform_fee_bps > 0) {
+        let fee_amount = balance::value(&fee_balance);
+        let platform_fee = utils::as_u64(
+            utils::percentage_of(utils::from_u64(fee_amount), br.platform_fee_bps),
+        );
+        let platform_fee_balance = balance::split(&mut fee_balance, platform_fee);
+        token_launcher::add_to_treasury(launchpad, platform_fee_balance);
+    };
 
     // Add fee to prize pool
     balance::join(&mut br.prize_pool, fee_balance);
@@ -225,7 +236,6 @@ public entry fun register_participant(
         br_address: object::uid_to_address(&br.id),
         participant: tx_context::sender(ctx),
         participation_fee: br.participation_fee,
-        registration_time: current_time,
     });
 }
 
@@ -263,7 +273,6 @@ public fun register_coin(br: &mut BattleRoyale, coin_address: address, ctx: &mut
         br_address,
         coin_address,
         participant: tx_context::sender(ctx),
-        registration_time: current_time,
     });
 }
 
@@ -274,7 +283,6 @@ public entry fun create_default_battle_royale(
     description: String,
     start_time: u64,
     end_time: u64,
-    initial_prize: Coin<SUI>,
     ctx: &mut TxContext,
 ) {
     create_battle_royale(
@@ -283,7 +291,6 @@ public entry fun create_default_battle_royale(
         description,
         start_time,
         end_time,
-        initial_prize,
         DEFAULT_MAX_COINS_PER_PARTICIPANT,
         DEFAULT_MID_BATTLE_REGISTRATION_ENABLED,
         DEFAULT_PARTICIPATION_FEE,
@@ -303,7 +310,6 @@ public entry fun create_battle_royale(
     description: String,
     start_time: u64,
     end_time: u64,
-    initial_prize: Coin<SUI>,
     max_coins_per_participant: u64,
     mid_battle_registration_enabled: bool,
     participation_fee: u64,
@@ -322,14 +328,11 @@ public entry fun create_battle_royale(
 
     // Validate prize distribution adds up to 10000 BPS (100%)
     assert!(
-        first_place_bps + second_place_bps + third_place_bps + platform_fee_bps == BPS_DENOMINATOR,
+        first_place_bps + second_place_bps + third_place_bps == BPS_DENOMINATOR,
         E_INVALID_TIME,
     );
 
     // Create BR object
-    let initial_prize_amount = coin::value(&initial_prize);
-    let prize_pool = coin::into_balance(initial_prize);
-
     let br = BattleRoyale {
         id: object::new(ctx),
         admin: tx_context::sender(ctx),
@@ -337,7 +340,7 @@ public entry fun create_battle_royale(
         description,
         start_time,
         end_time,
-        prize_pool,
+        prize_pool: balance::zero<SUI>(),
         participant_to_coins: table::new(ctx),
         coin_to_participant: table::new(ctx),
         max_coins_per_participant,
@@ -362,13 +365,15 @@ public entry fun create_battle_royale(
         description,
         start_time,
         end_time,
-        initial_prize_pool: initial_prize_amount,
+        initial_prize_pool: 0,
         participation_fee,
         br_fee_bps,
         first_place_bps,
         second_place_bps,
         third_place_bps,
         platform_fee_bps,
+        max_coins_per_participant,
+        mid_battle_registration_enabled,
     });
 
     // Share the BR object
@@ -392,9 +397,13 @@ public entry fun update_battle_royale(
 
     // Validate prize distribution adds up to 10000 BPS (100%)
     assert!(
-        first_place_bps + second_place_bps + third_place_bps + platform_fee_bps == BPS_DENOMINATOR,
+        first_place_bps + second_place_bps + third_place_bps == BPS_DENOMINATOR,
         E_INVALID_SHARES,
     );
+
+    // Ensure BR is not finalized or cancelled
+    assert!(!br.is_finalized && !br.is_cancelled, E_BR_NOT_OPEN);
+    assert!(tx_context::epoch(ctx) < br.end_time, E_BR_NOT_OPEN);
 
     let old_max_coins_per_participant = br.max_coins_per_participant;
     let old_mid_battle_registration_enabled = br.mid_battle_registration_enabled;
@@ -418,6 +427,7 @@ public entry fun update_battle_royale(
     // Emit update event
     event::emit(BattleRoyaleUpdatedEvent {
         br_address: object::uid_to_address(&br.id),
+        admin: tx_context::sender(ctx),
         old_max_coins_per_participant,
         new_max_coins_per_participant: max_coins_per_participant,
         old_mid_battle_registration_enabled,
@@ -494,7 +504,6 @@ public fun contribute_trade_fee(
 // This is a complex function that would need integration with an oracle or indexer
 // For this example, we'll assume we have winner addresses determined externally
 public entry fun finalize_battle_royale(
-    launchpad: &mut token_launcher::Launchpad,
     br: &mut BattleRoyale,
     first_place_coin_address: address,
     second_place_coin_address: address,
@@ -530,22 +539,17 @@ public entry fun finalize_battle_royale(
 
     // Calculate prize amounts
     let total_prize = balance::value(&br.prize_pool);
-    let platform_fee = (total_prize * br.platform_fee_bps) / BPS_DENOMINATOR;
-    let first_prize = (total_prize * br.first_place_bps) / BPS_DENOMINATOR;
-    let second_prize = (total_prize * br.second_place_bps) / BPS_DENOMINATOR;
-    let third_prize = (total_prize * br.third_place_bps) / BPS_DENOMINATOR;
-    // Verify that all shares add up to total (optional safety check)
-    assert!(
-        platform_fee + first_prize + second_prize + third_prize <= total_prize,
-        E_INVALID_SHARES,
+    let first_prize = utils::as_u64(
+        utils::percentage_of(utils::from_u64(total_prize), br.first_place_bps),
     );
-
-    // Pay admin fee
-    if (platform_fee > 0) {
-        let admin_payment = coin::take(&mut br.prize_pool, platform_fee, ctx);
-        let admin_payment_balance = coin::into_balance(admin_payment);
-        token_launcher::add_to_treasury(launchpad, admin_payment_balance);
-    };
+    let second_prize = utils::as_u64(
+        utils::percentage_of(utils::from_u64(total_prize), br.second_place_bps),
+    );
+    let third_prize = utils::as_u64(
+        utils::percentage_of(utils::from_u64(total_prize), br.third_place_bps),
+    );
+    // Verify that all shares add up to total (optional safety check)
+    assert!(first_prize + second_prize + third_prize <= total_prize, E_INVALID_SHARES);
 
     // Get creators of winning coins
     let first_place_user_address = br.coin_to_participant[first_place_coin_address];
@@ -606,10 +610,13 @@ public entry fun finalize_battle_royale(
         br_address: object::uid_to_address(&br.id),
         registry_address: object::uid_to_address(&winner_registry.id),
         first_place_user_address,
+        first_place_coin_address,
         first_place_amount: first_prize,
         second_place_user_address,
+        second_place_coin_address,
         second_place_amount: second_prize,
         third_place_user_address,
+        third_place_coin_address,
         third_place_amount: third_prize,
         total_prize_pool: total_prize,
     });
@@ -617,13 +624,8 @@ public entry fun finalize_battle_royale(
     // Emit finalization event
     event::emit(BattleRoyaleFinalizedEvent {
         br_address: object::uid_to_address(&br.id),
-        first_place: first_place_user_address,
-        first_place_amount: first_prize,
-        second_place: second_place_user_address,
-        second_place_amount: second_prize,
-        third_place: third_place_user_address,
-        third_place_amount: third_prize,
         total_prize_pool: total_prize,
+        admin: tx_context::sender(ctx),
     });
 
     // Share the winner registry
@@ -720,6 +722,10 @@ public fun get_battle_royale_info(
         br.is_finalized,
         br.is_cancelled,
     )
+}
+
+public fun get_address(br: &BattleRoyale): address {
+    object::uid_to_address(&br.id)
 }
 
 // Check if a coin is registered in a BR
