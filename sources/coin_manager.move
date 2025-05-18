@@ -50,6 +50,7 @@ public struct CoinInfo<phantom T> has key, store {
     token_decimals: u8, // Decimal places for the token
     graduated: bool, // Has token graduated to DEX?
     supply: u64, // Total supply in circulation
+    coin_type: String,
 }
 
 // Events
@@ -67,6 +68,7 @@ public struct CoinCreatedEvent has copy, drop {
     real_sui_reserves: u64,
     real_token_reserves: u64,
     token_decimals: u8,
+    coin_type: String,
     br_address: Option<address>,
 }
 
@@ -228,6 +230,7 @@ public fun create_coin_internal<T>(
     description: String,
     website: String,
     image_url: String,
+    coin_type: String,
     br_address: Option<address>,
     ctx: &mut TxContext,
 ): address {
@@ -294,6 +297,7 @@ public fun create_coin_internal<T>(
         token_decimals,
         graduated: false,
         supply: 0, // No tokens in circulation yet
+        coin_type: coin_type,
     };
 
     let coin_address = object::uid_to_address(&coin_info.id);
@@ -313,6 +317,7 @@ public fun create_coin_internal<T>(
         real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
         real_token_reserves: balance::value(&coin_info.real_token_reserves),
         token_decimals,
+        coin_type: coin_info.coin_type,
         br_address,
     });
 
@@ -337,6 +342,7 @@ public entry fun create_coin<T>(
     description: String,
     website: String,
     image_url: String,
+    coin_type: String,
     ctx: &mut TxContext,
 ): address {
     create_coin_internal(
@@ -349,6 +355,7 @@ public entry fun create_coin<T>(
         description,
         website,
         image_url,
+        coin_type,
         option::none(),
         ctx,
     )
@@ -471,6 +478,7 @@ public entry fun create_coin_for_br<T>(
     description: String,
     website: String,
     image_url: String,
+    coin_type: String,
     ctx: &mut TxContext,
 ): address {
     let br_address = battle_royale::get_address(battle_royale);
@@ -484,6 +492,7 @@ public entry fun create_coin_for_br<T>(
         description,
         website,
         image_url,
+        coin_type,
         option::some(br_address),
         ctx,
     );
