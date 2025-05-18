@@ -64,6 +64,8 @@ public struct CoinCreatedEvent has copy, drop {
     launch_time: u64,
     virtual_sui_reserves: u64,
     virtual_token_reserves: u64,
+    real_sui_reserves: u64,
+    real_token_reserves: u64,
     token_decimals: u8,
     br_address: Option<address>,
 }
@@ -80,6 +82,8 @@ public struct TradeEvent has copy, drop {
     new_price: u64,
     new_virtual_sui_reserves: u64,
     new_virtual_token_reserves: u64,
+    new_real_sui_reserves: u64,
+    new_real_token_reserves: u64,
 }
 
 // public struct TokenGraduatedEvent has copy, drop {
@@ -306,6 +310,8 @@ public fun create_coin_internal<T>(
         launch_time: tx_context::epoch(ctx),
         virtual_sui_reserves: coin_info.virtual_sui_reserves,
         virtual_token_reserves: coin_info.virtual_token_reserves,
+        real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+        real_token_reserves: balance::value(&coin_info.real_token_reserves),
         token_decimals,
         br_address,
     });
@@ -399,6 +405,8 @@ public entry fun buy_tokens<T>(
         new_price,
         new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
+        new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+        new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
     });
 }
 
@@ -446,6 +454,8 @@ public entry fun sell_tokens<T>(
         new_price,
         new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
+        new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+        new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
     });
 }
 
@@ -584,6 +594,8 @@ public entry fun buy_tokens_with_br<T>(
         new_price,
         new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
+        new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+        new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
     });
 }
 
@@ -675,6 +687,8 @@ public entry fun sell_tokens_with_br<T>(
         new_price,
         new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
+        new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+        new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
     });
 }
 
