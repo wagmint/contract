@@ -136,6 +136,7 @@ fun test_create_coin() {
             string::utf8(b"A test coin for unit testing"),
             string::utf8(b"https://example.com"),
             string::utf8(b"https://example.com/image.png"),
+            string::utf8(b"Test Coin"),
             test_scenario::ctx(&mut scenario),
         );
 

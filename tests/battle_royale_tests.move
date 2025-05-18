@@ -227,6 +227,7 @@ fun test_participant_registration_and_coin_creation() {
             string::utf8(b"A battle coin for testing"),
             string::utf8(b"https://example.com"),
             string::utf8(b"https://example.com/image.png"),
+            string::utf8(b"coinType"),
             test_scenario::ctx(&mut scenario),
         );
         address_holder.coin1_address = coin_address;
@@ -894,6 +895,7 @@ fun setup_participant_with_coin(scenario: &mut Scenario, user: address) {
             string::utf8(b"A battle coin for testing"),
             string::utf8(b"https://example.com"),
             string::utf8(b"https://example.com/image.png"),
+            string::utf8(b"coinType"),
             test_scenario::ctx(scenario),
         );
         address_holder.coin1_address = coin_address;
@@ -987,6 +989,7 @@ fun setup_multiple_participants_and_coins(scenario: &mut Scenario) {
             string::utf8(b"A battle coin for testing"),
             string::utf8(b"https://example.com"),
             string::utf8(b"https://example.com/image.png"),
+            string::utf8(b"coinType"),
             test_scenario::ctx(scenario),
         );
         address_holder.coin2_address = coin_address;
@@ -1074,6 +1077,7 @@ fun setup_multiple_participants_and_coins(scenario: &mut Scenario) {
             string::utf8(b"A battle coin for testing"),
             string::utf8(b"https://example.com"),
             string::utf8(b"https://example.com/image.png"),
+            string::utf8(b"coinType"),
             test_scenario::ctx(scenario),
         );
         address_holder.coin3_address = coin_address;
@@ -1249,6 +1253,7 @@ fun test_register_coin_without_participant() {
             string::utf8(b"A battle coin for testing"),
             string::utf8(b"https://example.com"),
             string::utf8(b"https://example.com/image.png"),
+            string::utf8(b"coinType"),
             test_scenario::ctx(&mut scenario),
         );
 
