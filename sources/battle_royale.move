@@ -226,6 +226,7 @@ public entry fun register_participant(
     };
 
     // Add fee to prize pool
+    let fee_amount = balance::value(&fee_balance);
     balance::join(&mut br.prize_pool, fee_balance);
 
     // Register the participant in the BR
@@ -235,7 +236,7 @@ public entry fun register_participant(
     event::emit(ParticipantRegisteredEvent {
         br_address: object::uid_to_address(&br.id),
         participant: tx_context::sender(ctx),
-        participation_fee: br.participation_fee,
+        participation_fee: fee_amount,
     });
 }
 
