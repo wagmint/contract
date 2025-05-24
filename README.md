@@ -1,112 +1,328 @@
-# Contract
+# WagMint Token Launcher
 
-A decentralized token launching platform built on the SUI blockchain inspired by pump.fun, allowing users to create and trade tokens using a bonding curve pricing model.
+A decentralized token launchpad built on the Sui blockchain featuring bonding curve mechanics and competitive Battle Royale events.
+
+## Table of Contents
+
+- [Overview](#overview)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Getting Started](#getting-started)
+- [Configuration](#configuration)
+- [Battle Royale System](#battle-royale-system)
+- [API Reference](#api-reference)
+- [Fee Structure](#fee-structure)
+- [Security](#security)
 
 ## Overview
 
-This project implements a token creation and trading platform on SUI blockchain using Move language. The platform allows:
+WagMint enables users to create and trade tokens using an automated market maker (AMM) with bonding curve pricing. The platform includes a unique Battle Royale system where token creators compete for prize pools based on their token's performance.
 
-- Creating custom tokens with name, symbol, and image URL
-- Trading tokens using a quadratic bonding curve (price = supply²/2,000,000)
-- Automated market making with built-in liquidity
-- Fee collection for platform sustainability
+## Features
 
-## Modules
+### 🚀 **Easy Token Creation**
 
-### 1. Token Launcher (`token_launcher.move`)
+- One-click token deployment with customizable metadata
+- Automatic liquidity provision through virtual reserves
+- No complex DEX setup required
 
-Core registry for the platform that keeps track of launched tokens.
+### 📈 **Bonding Curve Trading**
 
-- Maintains the launchpad object and admin controls
-- Tracks all launched coins
-- Provides admin functionality
+- Fair price discovery through mathematical curves
+- Immediate liquidity for all tokens
+- Automatic slippage protection
 
-### 2. Coin Manager (`coin_manager.move`)
+### 🏆 **Battle Royale Competitions**
 
-Handles token creation and trading operations.
+- Timed competitions with prize pools
+- Performance-based rankings
+- Community-driven events
 
-- Creating new tokens with custom metadata
-- Buying tokens (minting via bonding curve)
-- Selling tokens (burning via bonding curve)
-- View functions for prices and token info
+### 💰 **Automated Fee Management**
 
-### 3. Bonding Curve (`bonding_curve.move`)
+- Transparent fee collection
+- Battle Royale prize pool contributions
+- Admin treasury management
 
-Implements the mathematical pricing model.
+## Architecture
 
-- Calculation of token prices based on supply
-- Purchase cost calculation
-- Sale return calculation
+### Core Modules
 
-## Key Features
-
-### Bonding Curve
-
-The platform uses a quadratic bonding curve where:
-- Price = supply² / 2,000,000
-- Early tokens are cheaper
-- Price increases as supply increases
-- Provides automated price discovery
-
-### Fee Structure
-
-- Creation Fee: 1 SUI to create a new token
-- Transaction Fee: 1% on all trades
-- Fees go to the platform admin
-
-### Object Model
-
-- `Launchpad`: Shared object for platform management
-- `LaunchedCoinsRegistry`: Shared registry of all tokens
-- `CoinInfo<T>`: Shared object for each token's data and trading
-
-## Testing
-
-The codebase includes comprehensive tests:
-- Unit tests for calculations
-- Tests for token creation
-- Tests for buying/selling
-- Tests for admin functions
-
-To run tests:
-```bash
-sui move test
+```
+wagmint/
+├── token_launcher.move    # Platform configuration & treasury
+├── coin_manager.move      # Token creation & trading logic
+├── bonding_curve.move     # Price calculation algorithms
+├── battle_royale.move     # Competition mechanics
+└── utils.move            # Mathematical utilities
 ```
 
-### Manual Testing
-Prerequisites
-1. You need SUI wallet setup
-1. You need `sui cli` setup, follow this [link](https://docs.sui.io/guides/developer/getting-started)
-1. Connect to `sui testnet` follow this [guide](https://docs.sui.io/guides/developer/getting-started/connect)
-1. When you type `sui client envs` the testnet should be selected, and when you type `sui client addresses` you should see your wallet public address show up as the output
-1. If you don't have funds in your wallet, make sure to request for some via their discord channel
-1. Now you are ready to make some calls to the testnet SUI blockchain
+#### Token Launcher (`token_launcher.move`)
 
-#### Creating a coin
-1. Ask a friend for a boilerplate coin module folder
-1. `cd` into that directory and do `sui client publish`
-1. Once that is done, it will give you bunch of objects that has been created with its IDs. Make sure you capture these somewhere, if not, you can always use [suiscan](https://suiscan.xyz/testnet/home) to get these values at any time
-1. Now to go makefile and take a look at `create-coin` command
-1. `$(COIN_TYPE)` (i.e. can be found in column called objectType 0xaee85f74364926024c664e043e4f237e5b3f681a1e9ad3e9dd9ee50efa9104b3::my_token::MY_TOKEN) && `$(TREASURY_CAP_ID)` (ObjectID of TreasuryCap object) are fetched from the objects returned from when you published your boilerplate coin module. 
-1. `$(PAYMENT_COIN_ID)` is going to be from your wallet. Use command `sui client gas` and pick a gasCoinId that has the most mist balance
-1. The rest inputs can fetched from makefile defined variables at the top
-1. Now copy the same struct of cli script from `make create-coin` fill in these inputs and run it
-1. From the output, save the ObjectID of ObjectType `CoinInfo`, you will need it to buy coin
+- Configuration management (fees, reserves, decimals)
+- Treasury system for collected fees
+- Registry of all launched tokens
+- Admin controls and withdrawals
 
-#### Buying a coin
-1. Copy template from `make buy-tokens` command
-1. Fill in the fields with the same values you used for creating a coin script
-1. But for `$(COIN_INFO_ID)` fill this one in with the ObjectID of `CoinInfo` you got from `create-coin` step
-1. Now run the script
+#### Coin Manager (`coin_manager.move`)
 
-#### Selling a coin
-1. Copy template from `make sell-tokens` command
-1. All fields are same except `$(TOKEN_COIN_ID)`
-1. Here you need the objectID of the token you want to sell. There isn't an easy way to fetch this manually, so you have to get it from [suiscan](https://suiscan.xyz/testnet/home)
+- Token creation with metadata
+- Buy/sell trading engine
+- Battle Royale integration
+- Protected treasury cap management
 
-## Security Considerations
+#### Bonding Curve (`bonding_curve.move`)
 
-- Proper validation for inputs
-- Access control for admin functions 
-- Safe math operations
-- Reserve balance management
+- Constant product formula (x \* y = k)
+- Dynamic price calculations
+- Token minting/burning logic
+- Graduation threshold management
+
+#### Battle Royale (`battle_royale.move`)
+
+- Competition lifecycle management
+- Prize pool distribution
+- Winner registry and claims
+- Fee collection from trades
+
+## Getting Started
+
+### Prerequisites
+
+- Sui CLI installed
+- Sui wallet with SUI tokens
+- Move compiler setup
+
+### Deployment
+
+```bash
+# Build the project
+sui move build
+
+# Deploy to network
+sui client publish --gas-budget 100000000
+```
+
+### Creating Your First Token
+
+```move
+// Create a new token
+public entry fun create_coin<T>(
+    launchpad: &mut Launchpad,
+    treasury_cap: TreasuryCap<T>,
+    registry: &mut LaunchedCoinsRegistry,
+    payment: Coin<SUI>,
+    name: String,
+    symbol: String,
+    description: String,
+    website: String,
+    image_url: String,
+    coin_type: String,
+    ctx: &mut TxContext,
+)
+```
+
+### Trading Tokens
+
+```move
+// Buy tokens
+public entry fun buy_tokens<T>(
+    launchpad: &mut Launchpad,
+    coin_info: &mut CoinInfo<T>,
+    payment: Coin<SUI>,
+    sui_amount: u64,
+    ctx: &mut TxContext,
+)
+
+// Sell tokens
+public entry fun sell_tokens<T>(
+    launchpad: &mut Launchpad,
+    coin_info: &mut CoinInfo<T>,
+    tokens: Coin<T>,
+    ctx: &mut TxContext,
+)
+```
+
+## Configuration
+
+### Default Settings
+
+| Parameter      | Value     | Description                |
+| -------------- | --------- | -------------------------- |
+| Platform Fee   | 1%        | Trading fee percentage     |
+| Creation Fee   | 0.01 SUI  | Cost to create new token   |
+| Virtual SUI    | 2,500 SUI | Initial virtual reserves   |
+| Virtual Tokens | 1B        | Initial token supply       |
+| Token Decimals | 6         | Precision for calculations |
+
+### Admin Functions
+
+```move
+// Update platform configuration
+public entry fun update_launchpad_config(
+    lp: &mut Launchpad,
+    version: u64,
+    platform_fee: u64,
+    creation_fee: u64,
+    // ... other parameters
+)
+
+// Withdraw treasury funds
+public entry fun withdraw_treasury(
+    launchpad: &mut Launchpad,
+    amount: u64,
+    to_address: address,
+    ctx: &mut TxContext,
+)
+```
+
+## Battle Royale System
+
+### Competition Flow
+
+1. **🏁 Event Creation**
+
+   ```move
+   public entry fun create_battle_royale(
+       launchpad: &Launchpad,
+       name: String,
+       description: String,
+       start_time: u64,
+       end_time: u64,
+       // ... configuration parameters
+   )
+   ```
+
+2. **📝 Registration**
+
+   ```move
+   public entry fun register_participant(
+       launchpad: &mut Launchpad,
+       br: &mut BattleRoyale,
+       payment: Coin<SUI>,
+       ctx: &mut TxContext,
+   )
+   ```
+
+3. **🎯 Competition Trading**
+
+   ```move
+   public entry fun buy_tokens_with_br<T>(
+       launchpad: &mut Launchpad,
+       coin_info: &mut CoinInfo<T>,
+       payment: &mut Coin<SUI>,
+       sui_amount: u64,
+       br: &mut BattleRoyale,
+       ctx: &mut TxContext,
+   )
+   ```
+
+4. **🏆 Finalization & Claims**
+
+   ```move
+   public entry fun finalize_battle_royale(
+       br: &mut BattleRoyale,
+       first_place_coin: address,
+       second_place_coin: address,
+       third_place_coin: address,
+       ctx: &mut TxContext,
+   )
+
+   public entry fun claim_prize(
+       winner_registry: &mut WinnerRegistry,
+       ctx: &mut TxContext,
+   )
+   ```
+
+### Prize Distribution
+
+| Rank         | Prize Share | Default % |
+| ------------ | ----------- | --------- |
+| 🥇 1st Place | 55%         | 5,500 BPS |
+| 🥈 2nd Place | 30%         | 3,000 BPS |
+| 🥉 3rd Place | 15%         | 1,500 BPS |
+
+## API Reference
+
+### View Functions
+
+```move
+// Get token information
+public fun get_coin_info<T>(info: &CoinInfo<T>): (String, String, Url, address, u64, u64)
+
+// Get current token price
+public fun get_current_price<T>(coin_info: &CoinInfo<T>): u64
+
+// Calculate market cap
+public fun calculate_market_cap<T>(coin_info: &CoinInfo<T>): u64
+
+// Check Battle Royale status
+public fun is_battle_royale_active(br: &BattleRoyale, current_time: u64): bool
+```
+
+### Events
+
+```move
+// Token creation
+public struct CoinCreatedEvent has copy, drop {
+    name: String,
+    symbol: String,
+    creator: address,
+    coin_address: address,
+    // ... other fields
+}
+
+// Trading activity
+public struct TradeEvent has copy, drop {
+    is_buy: bool,
+    coin_address: address,
+    user_address: address,
+    token_amount: u64,
+    sui_amount: u64,
+    // ... other fields
+}
+
+// Battle Royale events
+public struct BattleRoyaleCreatedEvent has copy, drop { /* ... */ }
+public struct WinnerRegistryCreatedEvent has copy, drop { /* ... */ }
+public struct PrizeClaimedEvent has copy, drop { /* ... */ }
+```
+
+## Fee Structure
+
+### Platform Fees
+
+- **Creation Fee**: 0.01 SUI per token
+- **Trading Fee**: 1% of transaction value
+- **Battle Royale Participation**: 0.1 SUI
+
+### Battle Royale Fee Distribution
+
+- **Platform**: 10% of participation fees
+- **Prize Pool**: 90% of participation fees + 50% of trading fees during event
+
+## Security
+
+### Access Controls
+
+- **Admin-only functions**: Configuration updates, treasury withdrawals, competition management
+- **Time-based validations**: Prevents manipulation during active competitions
+- **Balance assertions**: Ensures sufficient funds for all operations
+
+### Protected Assets
+
+- **Treasury Caps**: Secured in protected structs to prevent unauthorized minting
+- **Prize Pools**: Isolated in winner registries with claim verification
+- **Virtual Reserves**: Mathematical constraints prevent price manipulation
+
+### Error Handling
+
+```move
+// Common error codes
+const E_NOT_ADMIN: u64 = 0;
+const E_INSUFFICIENT_PAYMENT: u64 = 1;
+const E_BR_NOT_OPEN: u64 = 2;
+const E_ALREADY_REGISTERED: u64 = 4;
+const E_COIN_NOT_REGISTERED: u64 = 5;
+// ... additional error codes
+```
