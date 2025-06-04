@@ -141,7 +141,7 @@ fun test_init_internal(scenario: &mut Scenario) {
             coin2_address: @0x0,
             coin3_address: @0x0,
         };
-        transfer::transfer(address_holder, ADMIN);
+        transfer::public_transfer(address_holder, ADMIN);
 
         // Return shared objects
         test_scenario::return_shared(br);
@@ -291,6 +291,7 @@ fun test_trade_with_battle_royale() {
             &mut launchpad,
             &mut coin_info,
             &mut payment,
+            sui_amount,
             sui_amount,
             &mut br,
             test_scenario::ctx(&mut scenario),
@@ -699,6 +700,7 @@ fun test_sell_tokens_with_battle_royale() {
             &mut coin_info,
             &mut payment,
             sui_amount,
+            sui_amount,
             &mut br,
             test_scenario::ctx(&mut scenario),
         );
@@ -751,6 +753,7 @@ fun test_sell_tokens_with_battle_royale() {
             &mut launchpad,
             &mut coin_info,
             tokens_to_sell,
+            token_amount / 10,
             &mut br,
             test_scenario::ctx(&mut scenario),
         );
