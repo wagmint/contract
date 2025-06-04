@@ -152,6 +152,7 @@ fun test_init_internal(scenario: &mut Scenario) {
 #[test]
 fun test_participant_registration_and_coin_creation() {
     let mut scenario = test_scenario::begin(ADMIN);
+    test_scenario::next_epoch(&mut scenario, ADMIN);
     test_init_internal(&mut scenario);
 
     // Register USER1 as a participant
@@ -753,7 +754,7 @@ fun test_sell_tokens_with_battle_royale() {
             &mut launchpad,
             &mut coin_info,
             tokens_to_sell,
-            token_amount / 10,
+            0,
             &mut br,
             test_scenario::ctx(&mut scenario),
         );
@@ -827,6 +828,8 @@ fun test_register_after_br_ends() {
 
 // Helper function to register USER1 as a participant and create a coin
 fun setup_participant_with_coin(scenario: &mut Scenario, user: address) {
+    test_scenario::next_epoch(scenario, ADMIN);
+
     // Register USER1 as a participant
     test_scenario::next_tx(scenario, user);
     {
@@ -1216,6 +1219,7 @@ fun test_register_insufficient_payment() {
 #[expected_failure(abort_code = battle_royale::E_PARTICIPANT_NOT_REGISTERED)]
 fun test_register_coin_without_participant() {
     let mut scenario = test_scenario::begin(ADMIN);
+    test_scenario::next_epoch(&mut scenario, ADMIN);
     test_init_internal(&mut scenario);
 
     // Try to register coin without registering participant first
