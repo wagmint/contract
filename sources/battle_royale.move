@@ -250,6 +250,9 @@ public fun register_coin(br: &mut BattleRoyale, coin_address: address, ctx: &mut
     // Ensure BR hasn't ended
     assert!(current_time <= br.end_time, E_BR_NOT_OPEN);
 
+    // Ensure BR has started
+    assert!(current_time >= br.start_time, E_BR_NOT_OPEN);
+
     // Ensure participant is already registered
     assert!(
         table::contains(&br.participant_to_coins, tx_context::sender(ctx)),

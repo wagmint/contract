@@ -150,7 +150,7 @@ fun test_create_coin() {
             id: object::new(test_scenario::ctx(&mut scenario)),
             addr: coin_address,
         };
-        transfer::transfer(address_wrapper, ADMIN);
+        transfer::public_transfer(address_wrapper, ADMIN);
     };
 
     // Verify the coin was created correctly
@@ -242,6 +242,7 @@ fun test_create_coin() {
             &mut launchpad,
             &mut coin_info,
             payment,
+            sui_amount,
             sui_amount,
             test_scenario::ctx(&mut scenario),
         );

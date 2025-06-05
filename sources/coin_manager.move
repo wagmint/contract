@@ -19,6 +19,8 @@ const E_INSUFFICIENT_BALANCE: u64 = 3;
 const E_AMOUNT_TOO_SMALL: u64 = 4;
 const E_ALREADY_GRADUATED: u64 = 6;
 const E_BATTLE_ROYALE_NOT_ACTIVE_FOR_TRADE: u64 = 7;
+const E_SLIPPAGE_EXCEEDED_BUY: u64 = 8;
+const E_SLIPPAGE_EXCEEDED_SELL: u64 = 9;
 
 // Constants for validation
 const MAX_NAME_LENGTH: u64 = 32;
@@ -366,10 +368,21 @@ public entry fun buy_tokens<T>(
     coin_info: &mut CoinInfo<T>,
     payment: Coin<SUI>,
     sui_amount: u64,
+    min_tokens_out: u64,
     ctx: &mut TxContext,
 ) {
     // Validate amount
     assert!(sui_amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
+
+    // Calculate what we would get (without executing)
+    let expected_tokens = bonding_curve::calculate_tokens_to_mint(
+        coin_info.virtual_sui_reserves,
+        coin_info.virtual_token_reserves,
+        sui_amount,
+    );
+
+    // Check slippage BEFORE any state changes
+    assert!(expected_tokens >= min_tokens_out, E_SLIPPAGE_EXCEEDED_BUY);
 
     // Use the bonding curve to calculate tokens and process payment
     let (tokens_to_mint, platform_fee_amount) = buy_tokens_helper(
@@ -421,9 +434,24 @@ public entry fun sell_tokens<T>(
     launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
     tokens: Coin<T>,
+    min_sui_out: u64,
     ctx: &mut TxContext,
 ) {
     let token_amount = coin::value(&tokens);
+
+    // Calculate what we would get (without executing)
+    let gross_return = bonding_curve::calculate_sale_return(
+        coin_info.virtual_sui_reserves,
+        coin_info.virtual_token_reserves,
+        token_amount,
+    );
+
+    let platform_fee = token_launcher::get_platform_fee(launchpad);
+    let fee = calculate_transaction_fee(gross_return, platform_fee);
+    let net_return = gross_return - fee;
+
+    // Check slippage BEFORE any state changes
+    assert!(net_return >= min_sui_out, E_SLIPPAGE_EXCEEDED_SELL);
 
     // Process the sell operation using bonding curve
     let (sui_amount, return_coin, platform_fee_amount) = sell_tokens_helper(
@@ -507,6 +535,7 @@ public entry fun buy_tokens_with_br<T>(
     coin_info: &mut CoinInfo<T>,
     payment: &mut Coin<SUI>,
     sui_amount: u64,
+    min_tokens_out: u64,
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
@@ -533,6 +562,9 @@ public entry fun buy_tokens_with_br<T>(
         coin_info.virtual_token_reserves,
         sui_amount,
     );
+
+    // Check slippage BEFORE any state changes
+    assert!(tokens_to_mint >= min_tokens_out, E_SLIPPAGE_EXCEEDED_BUY);
 
     // Calculate the fee
     let platform_fee = token_launcher::get_platform_fee(launchpad);
@@ -612,6 +644,7 @@ public entry fun sell_tokens_with_br<T>(
     launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
     tokens: Coin<T>,
+    min_sui_out: u64,
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
@@ -640,6 +673,9 @@ public entry fun sell_tokens_with_br<T>(
     let platform_fee = token_launcher::get_platform_fee(launchpad);
     let fee = calculate_transaction_fee(return_cost, platform_fee);
     let final_return_cost = return_cost - fee;
+
+    // Check slippage BEFORE any state changes
+    assert!(final_return_cost >= min_sui_out, E_SLIPPAGE_EXCEEDED_SELL);
 
     // Update virtual reserves
     coin_info.virtual_sui_reserves = coin_info.virtual_sui_reserves - return_cost;
