@@ -92,10 +92,3 @@ public fun has_reached_graduation_threshold(
 ): bool {
     virtual_sui_reserves >= graduation_threshold
 }
-
-// Get graduation threshold from launchpad config
-public fun get_graduation_threshold(launchpad: &Launchpad): u64 {
-    // By default, graduation threshold is about 2.3x the initial virtual SUI
-    let initial_virtual_sui = token_launcher::get_initial_virtual_sui(launchpad);
-    utils::as_u64(utils::mul(utils::from_u64(initial_virtual_sui), utils::from_u64(23)) / 10)
-}

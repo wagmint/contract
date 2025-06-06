@@ -42,16 +42,20 @@ public struct CoinInfo<phantom T> has key, store {
     creator: address,
     launch_time: u64,
     protected_cap: ProtectedTreasuryCap<T>,
-    // Real reserves - actual tokens and SUI
+    // Token allocation tracking
+    bonding_curve_tokens: u64, // Tokens allocated to bonding curve (80%)
+    amm_reserve_tokens: u64, // Tokens reserved for AMM (20%)
+    total_token_supply: u64, // Total planned supply (100%)
+    // Real reserves - only bonding curve portion
     real_token_reserves: Balance<T>, // Tokens held by the bonding curve
     real_sui_reserves: Balance<SUI>, // Actual SUI reserves
-    // Virtual reserves - for price calculation
+    // Virtual reserves - for price calculation (full amount for curve continuity)
     virtual_token_reserves: u64, // Virtual tokens for curve calculation
     virtual_sui_reserves: u64, // Virtual SUI for curve calculation
     // Token metadata
     token_decimals: u8, // Decimal places for the token
     graduated: bool, // Has token graduated to DEX?
-    supply: u64, // Total supply in circulation
+    supply: u64, // Total supply in circulation (from bonding curve)
     coin_type: String,
 }
 
@@ -69,6 +73,9 @@ public struct CoinCreatedEvent has copy, drop {
     virtual_token_reserves: u64,
     real_sui_reserves: u64,
     real_token_reserves: u64,
+    bonding_curve_tokens: u64,
+    amm_reserve_tokens: u64,
+    total_token_supply: u64,
     token_decimals: u8,
     coin_type: String,
     br_address: Option<address>,
@@ -89,14 +96,6 @@ public struct TradeEvent has copy, drop {
     new_real_sui_reserves: u64,
     new_real_token_reserves: u64,
 }
-
-// public struct TokenGraduatedEvent has copy, drop {
-//     coin_address: address,
-//     supply: u64,
-//     sui_reserves: u64,
-//     virtual_sui_reserves: u64,
-//     virtual_token_reserves: u64,
-// }
 
 // Calculate transaction fee
 public fun calculate_transaction_fee(amount: u64, transaction_fee_bps: u64): u64 {
@@ -151,15 +150,6 @@ public fun buy_tokens_helper<T>(
     coin_info.virtual_sui_reserves = coin_info.virtual_sui_reserves + amount;
     coin_info.virtual_token_reserves = coin_info.virtual_token_reserves - tokens_to_mint;
 
-    // Check for graduation
-    // if (
-    //     bonding_curve::has_reached_graduation_threshold(
-    //         coin_info.virtual_sui_reserves,
-    //         bonding_curve::get_graduation_threshold(launchpad),
-    //     )
-    // ) {
-    //     graduate_token(coin_info, ctx);
-    // };
     (tokens_to_mint, fee)
 }
 
@@ -202,23 +192,6 @@ public fun sell_tokens_helper<T>(
     let return_coin = coin::from_balance(return_payment, ctx);
     (return_cost, return_coin, fee)
 }
-
-// Graduate token to DEX
-// fun graduate_token<T>(coin_info: &mut CoinInfo<T>, ctx: &mut TxContext) {
-//     // Only graduate once
-//     if (!coin_info.graduated) {
-//         coin_info.graduated = true;
-
-//         // Emit graduation event
-//         event::emit(TokenGraduatedEvent {
-//             coin_address: object::uid_to_address(&coin_info.id),
-//             supply: coin_info.supply,
-//             sui_reserves: balance::value(&coin_info.real_sui_reserves),
-//             virtual_sui_reserves: coin_info.virtual_sui_reserves,
-//             virtual_token_reserves: coin_info.virtual_token_reserves,
-//         });
-//     }
-// }
 
 // === Create Coin internal ===
 #[allow(lint(self_transfer))]
@@ -269,15 +242,19 @@ public fun create_coin_internal<T>(
         cap: treasury_cap,
     };
 
-    // Get initial virtual reserves from launchpad config
+    // Get configuration from launchpad
     let initial_virtual_sui = token_launcher::get_initial_virtual_sui(launchpad);
     let initial_virtual_tokens = token_launcher::get_initial_virtual_tokens(launchpad);
     let token_decimals = token_launcher::get_token_decimals(launchpad);
 
-    // Mint actual tokens for initial distribution (all tokens are held by the bonding curve)
+    // Calculate token allocation based on 80/20 split
+    let bonding_curve_tokens = token_launcher::calculate_bonding_curve_tokens(launchpad);
+    let amm_reserve_tokens = token_launcher::calculate_amm_reserve_tokens(launchpad);
+
+    // Mint only the bonding curve tokens initially (80%)
     let minted_tokens = coin::mint(
         &mut protected_cap.cap,
-        initial_virtual_tokens,
+        bonding_curve_tokens,
         ctx,
     );
     let minted_balance = coin::into_balance(minted_tokens);
@@ -291,9 +268,14 @@ public fun create_coin_internal<T>(
         creator: tx_context::sender(ctx),
         launch_time: tx_context::epoch(ctx),
         protected_cap,
-        // Initial token allocation
+        // Token allocation tracking
+        bonding_curve_tokens,
+        amm_reserve_tokens,
+        total_token_supply: initial_virtual_tokens,
+        // Real reserves (only bonding curve portion)
         real_token_reserves: minted_balance,
         real_sui_reserves: balance::zero(),
+        // Virtual reserves (still use full amount for price calculation continuity)
         virtual_token_reserves: initial_virtual_tokens,
         virtual_sui_reserves: initial_virtual_sui,
         token_decimals,
@@ -318,6 +300,9 @@ public fun create_coin_internal<T>(
         virtual_token_reserves: coin_info.virtual_token_reserves,
         real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
         real_token_reserves: balance::value(&coin_info.real_token_reserves),
+        bonding_curve_tokens: coin_info.bonding_curve_tokens,
+        amm_reserve_tokens: coin_info.amm_reserve_tokens,
+        total_token_supply: coin_info.total_token_supply,
         token_decimals,
         coin_type: coin_info.coin_type,
         br_address,
@@ -737,6 +722,32 @@ public entry fun sell_tokens_with_br<T>(
     });
 }
 
+// === Graduation Functions ===
+// Check if token is eligible for graduation
+public fun check_graduation_eligibility<T>(
+    launchpad: &token_launcher::Launchpad,
+    coin_info: &CoinInfo<T>,
+): bool {
+    if (coin_info.graduated) {
+        return false
+    };
+
+    let market_cap = calculate_market_cap(coin_info);
+    let graduation_threshold = token_launcher::get_graduation_fee(launchpad); // Using graduation fee as threshold for now
+
+    market_cap >= graduation_threshold
+}
+
+// Get AMM reserve tokens (these will be minted during graduation)
+public fun get_amm_reserve_tokens<T>(coin_info: &CoinInfo<T>): u64 {
+    coin_info.amm_reserve_tokens
+}
+
+// Get bonding curve tokens
+public fun get_bonding_curve_tokens<T>(coin_info: &CoinInfo<T>): u64 {
+    coin_info.bonding_curve_tokens
+}
+
 // View functions
 public fun get_coin_info<T>(info: &CoinInfo<T>): (String, String, Url, address, u64, u64) {
     (
@@ -832,6 +843,11 @@ public fun get_name<T>(info: &CoinInfo<T>): String {
 // Get image URL
 public fun get_image_url<T>(info: &CoinInfo<T>): Url {
     info.image_url
+}
+
+// Get total token supply
+public fun get_total_token_supply<T>(info: &CoinInfo<T>): u64 {
+    info.total_token_supply
 }
 
 // Extracted validation logic for testing
