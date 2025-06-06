@@ -1,6 +1,5 @@
 module wagmint::bonding_curve;
 
-use wagmint::token_launcher::{Self, Launchpad};
 use wagmint::utils;
 
 // Error codes

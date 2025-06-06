@@ -182,12 +182,13 @@ fun test_create_coin() {
         // Check virtual reserves
         let initial_virtual_sui = token_launcher::get_initial_virtual_sui(&launchpad);
         let initial_virtual_tokens = token_launcher::get_initial_virtual_tokens(&launchpad);
+        let bonding_curve_tokens = token_launcher::calculate_bonding_curve_tokens(&launchpad);
 
         assert!(coin_manager::get_virtual_sui_reserves(&coin_info) == initial_virtual_sui, 5);
         assert!(coin_manager::get_virtual_token_reserves(&coin_info) == initial_virtual_tokens, 6);
 
         // Verify real token reserves (all initially held by bonding curve)
-        assert!(coin_manager::get_real_token_reserves(&coin_info) == initial_virtual_tokens, 7);
+        assert!(coin_manager::get_real_token_reserves(&coin_info) == bonding_curve_tokens, 7);
 
         // Verify token decimals
         assert!(
