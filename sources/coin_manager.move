@@ -771,13 +771,10 @@ public fun get_current_price<T>(coin_info: &CoinInfo<T>): u64 {
 // Calculate market cap
 public fun calculate_market_cap<T>(coin_info: &CoinInfo<T>): u64 {
     let price = get_current_price(coin_info);
-    let total_tokens = coin_info.virtual_token_reserves;
-    let fully_diluted_market_cap = utils::as_u64(
-        utils::mul(utils::from_u64(price), utils::from_u64(total_tokens)),
-    );
-
-    // Return the fully diluted market cap (like pump.fun)
-    fully_diluted_market_cap
+    let circulating_supply = coin_info.supply; // Tokens actually in circulation
+    utils::as_u64(
+        utils::mul(utils::from_u64(price), utils::from_u64(circulating_supply)),
+    )
 }
 
 // Get coin ID
