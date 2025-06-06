@@ -733,7 +733,7 @@ public fun check_graduation_eligibility<T>(
     };
 
     let market_cap = calculate_market_cap(coin_info);
-    let graduation_threshold = token_launcher::get_graduation_fee(launchpad); // Using graduation fee as threshold for now
+    let graduation_threshold = token_launcher::get_graduation_threshold(launchpad);
 
     market_cap >= graduation_threshold
 }
