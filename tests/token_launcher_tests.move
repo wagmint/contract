@@ -162,10 +162,13 @@ fun test_update_config() {
             2, // version
             200, // platform_fee
             20_000_000, // creation_fee
+            69_000_000_000_000, // graduation_threshold
             400_000_000_000, // graduation_fee
             3_000_000_000_000, // initial_virtual_sui
             2_000_000_000_000_000, // initial_virtual_tokens
             9, // token_decimals
+            8000,
+            2000,
             test_scenario::ctx(&mut scenario),
         );
         assert_eq(token_launcher::get_version(&launchpad), 2);
@@ -195,10 +198,13 @@ fun test_update_config_by_non_admin() {
             2, // version
             200, // platform_fee
             20_000_000, // creation_fee
+            69_000_000_000_000, // graduation_threshold
             400_000_000_000, // graduation_fee
             3_000_000_000_000, // initial_virtual_sui
             2_000_000_000_000_000, // initial_virtual_tokens
             9, // token_decimals
+            8000,
+            2000,
             test_scenario::ctx(&mut scenario),
         );
         test_scenario::return_shared(launchpad);
