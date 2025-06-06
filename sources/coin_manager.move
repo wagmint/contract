@@ -21,6 +21,8 @@ const E_ALREADY_GRADUATED: u64 = 6;
 const E_BATTLE_ROYALE_NOT_ACTIVE_FOR_TRADE: u64 = 7;
 const E_SLIPPAGE_EXCEEDED_BUY: u64 = 8;
 const E_SLIPPAGE_EXCEEDED_SELL: u64 = 9;
+const E_NOT_ELIGIBLE_FOR_GRADUATION: u64 = 10;
+const E_GRADUATION_ALREADY_IN_PROGRESS: u64 = 11;
 
 // Constants for validation
 const MAX_NAME_LENGTH: u64 = 32;
@@ -95,6 +97,19 @@ public struct TradeEvent has copy, drop {
     new_virtual_token_reserves: u64,
     new_real_sui_reserves: u64,
     new_real_token_reserves: u64,
+}
+
+// Graduation event
+public struct TokenGraduatedEvent has copy, drop {
+    coin_address: address,
+    graduation_time: u64,
+    final_bonding_curve_price: u64,
+    accumulated_sui_amount: u64,
+    amm_reserve_tokens_minted: u64,
+    total_supply_in_circulation: u64,
+    creator: address,
+    // AMM pool info (will be populated when integrated)
+    amm_pool_id: Option<address>,
 }
 
 // Calculate transaction fee
@@ -247,11 +262,11 @@ public fun create_coin_internal<T>(
     let initial_virtual_tokens = token_launcher::get_initial_virtual_tokens(launchpad);
     let token_decimals = token_launcher::get_token_decimals(launchpad);
 
-    // Calculate token allocation based on 80/20 split
+    // Calculate token allocation based on bonding_curve_tokens/amm_reserve_tokens split
     let bonding_curve_tokens = token_launcher::calculate_bonding_curve_tokens(launchpad);
     let amm_reserve_tokens = token_launcher::calculate_amm_reserve_tokens(launchpad);
 
-    // Mint only the bonding curve tokens initially (80%)
+    // Mint only the bonding curve tokens initially (bonding_curve_reserve %)
     let minted_tokens = coin::mint(
         &mut protected_cap.cap,
         bonding_curve_tokens,
@@ -723,6 +738,7 @@ public entry fun sell_tokens_with_br<T>(
 }
 
 // === Graduation Functions ===
+
 // Check if token is eligible for graduation
 public fun check_graduation_eligibility<T>(
     launchpad: &token_launcher::Launchpad,
@@ -736,6 +752,105 @@ public fun check_graduation_eligibility<T>(
     let graduation_threshold = token_launcher::get_graduation_threshold(launchpad);
 
     market_cap >= graduation_threshold
+}
+
+// Main graduation function
+public entry fun graduate_token<T>(
+    launchpad: &mut token_launcher::Launchpad,
+    coin_info: &mut CoinInfo<T>,
+    ctx: &mut TxContext,
+) {
+    // 1. Validate graduation eligibility
+    assert!(!coin_info.graduated, E_ALREADY_GRADUATED);
+    assert!(
+        check_graduation_eligibility(launchpad, coin_info), 
+        E_NOT_ELIGIBLE_FOR_GRADUATION
+    );
+
+    // Store some values before we modify the state
+    let final_bc_price = get_current_price(coin_info);
+    let creator = coin_info.creator;
+    let coin_address = object::uid_to_address(&coin_info.id);
+
+    // 2. Extract accumulated SUI from bonding curve
+    let accumulated_sui_balance = balance::withdraw_all(&mut coin_info.real_sui_reserves);
+    let accumulated_sui_amount = balance::value(&accumulated_sui_balance);
+
+    // 3. Mint the reserved tokens for AMM (20% of total supply)
+    let amm_reserve_tokens = coin::mint(
+        &mut coin_info.protected_cap.cap,
+        coin_info.amm_reserve_tokens,
+        ctx,
+    );
+    let amm_reserve_tokens_minted = coin::value(&amm_reserve_tokens);
+
+    // 4. Mark as graduated (disables bonding curve trading)
+    coin_info.graduated = true;
+
+    // 5. TODO: Integrate with AMM
+    // This is where we'll integrate with AMM in the future
+    // For now, we'll store the liquidity and emit an event
+    
+    // TODO Step 1: Create bTokens and banks for both assets (if they don't exist)
+    // TODO: Check if SUI bToken/bank exists
+    // TODO: Check if our token bToken/bank exists  
+    // TODO: If not, create them using Suilend's methods
+    
+    // TODO Step 2: Create LP token for the new pool
+    // TODO: Create LP token using Suilend's LP token creation
+    
+    // TODO Step 3: Create pool and deposit initial liquidity
+    // TODO: Use equivalent of createPoolAndDepositInitialLiquidity
+    // TODO: Deposit accumulated_sui_balance + amm_reserve_tokens
+    
+    // TEMPORARY: For now, we'll transfer the liquidity to the creator
+    // In production, this should go to the AMM pool
+    transfer::public_transfer(coin::from_balance(accumulated_sui_balance, ctx), creator);
+    transfer::public_transfer(amm_reserve_tokens, creator);
+    
+    // TODO: Replace above transfers with actual AMM pool creation
+    // let amm_pool_id = create_pool(accumulated_sui_balance, amm_reserve_tokens);
+
+    event::emit(TokenGraduatedEvent {
+        coin_address,
+        graduation_time: tx_context::epoch(ctx),
+        final_bonding_curve_price: final_bc_price,
+        accumulated_sui_amount,
+        amm_reserve_tokens_minted,
+        total_supply_in_circulation: coin_info.supply,
+        creator,
+        amm_pool_id: option::none(), // TODO: Set to actual pool ID when implemented
+    });
+}
+
+// Helper function to estimate graduation readiness
+public fun get_graduation_progress<T>(
+    launchpad: &token_launcher::Launchpad,
+    coin_info: &CoinInfo<T>,
+): (u64, u64, u64) {
+    let current_market_cap = calculate_market_cap(coin_info);
+    let graduation_threshold = token_launcher::get_graduation_threshold(launchpad);
+    
+    let progress_percentage = if (graduation_threshold > 0) {
+        utils::as_u64(
+            utils::div(
+                utils::mul(utils::from_u64(current_market_cap), utils::from_u64(10000)),
+                utils::from_u64(graduation_threshold)
+            )
+        )
+    } else {
+        0
+    };
+
+    (current_market_cap, graduation_threshold, progress_percentage)
+}
+
+// Get estimated AMM liquidity upon graduation
+public fun get_estimated_amm_liquidity<T>(coin_info: &CoinInfo<T>): (u64, u64) {
+    let estimated_sui_liquidity = balance::value(&coin_info.real_sui_reserves);
+    let estimated_token_liquidity = coin_info.amm_reserve_tokens;
+    
+    (estimated_sui_liquidity, estimated_token_liquidity)
 }
 
 // Get AMM reserve tokens (these will be minted during graduation)
