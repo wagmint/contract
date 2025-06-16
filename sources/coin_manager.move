@@ -739,6 +739,90 @@ public entry fun sell_tokens_with_br<T>(
 
 // === Graduation Functions ===
 
+// === Mock STEAMM Types for Testing ===
+// TODO: Replace these with real STEAMM types when contracts are available
+
+/// Mock registry for STEAMM (temporary)
+public struct MockRegistry has key {
+    id: UID,
+    version: u64,
+}
+
+/// Mock lending market for Suilend integration (temporary)
+public struct MockLendingMarket has key {
+    id: UID,
+    version: u64,
+}
+
+/// Mock bank for SUI deposits (temporary)
+public struct MockBank has key {
+    id: UID,
+    token_type: String,
+}
+
+/// Mock pool result for AMM creation (temporary)
+public struct MockPoolResult has copy, drop {
+    pool_id: address,
+    lp_token_amount: u64,
+}
+
+// === Mock STEAMM Events ===
+public struct MockPoolCreatedEvent has copy, drop {
+    pool_id: address,
+    token_a_type: String,
+    token_b_type: String,
+    initial_liquidity_a: u64,
+    initial_liquidity_b: u64,
+    lp_tokens_minted: u64,
+    creator: address,
+}
+
+// === Mock Helper Functions ===
+
+/// Create mock registry for testing
+public fun create_mock_registry(ctx: &mut TxContext): MockRegistry {
+    MockRegistry {
+        id: object::new(ctx),
+        version: 1,
+    }
+}
+
+/// Create mock lending market for testing
+public fun create_mock_lending_market(ctx: &mut TxContext): MockLendingMarket {
+    MockLendingMarket {
+        id: object::new(ctx),
+        version: 1,
+    }
+}
+
+/// Create mock SUI bank for testing
+public fun create_mock_sui_bank(ctx: &mut TxContext): MockBank {
+    MockBank {
+        id: object::new(ctx),
+        token_type: std::string::utf8(b"SUI"),
+    }
+}
+
+/// Mock AMM pool creation (simulates STEAMM integration)
+fun mock_create_amm_pool(
+    sui_amount: u64,
+    token_amount: u64,
+    _registry: &MockRegistry,
+    _lending_market: &MockLendingMarket,
+    _sui_bank: &MockBank,
+    ctx: &TxContext,
+): MockPoolResult {
+    let pool_id = object::id_from_address(tx_context::sender(ctx));
+
+    // Simulate LP token calculation (simple 1:1 for testing)
+    let lp_tokens = sui_amount + token_amount;
+
+    MockPoolResult {
+        pool_id: object::id_to_address(&pool_id),
+        lp_token_amount: lp_tokens,
+    }
+}
+
 // Check if token is eligible for graduation
 public fun check_graduation_eligibility<T>(
     launchpad: &token_launcher::Launchpad,
@@ -755,17 +839,19 @@ public fun check_graduation_eligibility<T>(
 }
 
 // Main graduation function
+// Updated graduation function with mock STEAMM integration
 public entry fun graduate_token<T>(
     launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
+    // Mock STEAMM dependencies (temporary - will be replaced with real objects)
+    mock_registry: &MockRegistry,
+    mock_lending_market: &MockLendingMarket,
+    mock_sui_bank: &MockBank,
     ctx: &mut TxContext,
 ) {
     // 1. Validate graduation eligibility
     assert!(!coin_info.graduated, E_ALREADY_GRADUATED);
-    assert!(
-        check_graduation_eligibility(launchpad, coin_info), 
-        E_NOT_ELIGIBLE_FOR_GRADUATION
-    );
+    assert!(check_graduation_eligibility(launchpad, coin_info), E_NOT_ELIGIBLE_FOR_GRADUATION);
 
     // Store some values before we modify the state
     let final_bc_price = get_current_price(coin_info);
@@ -787,30 +873,67 @@ public entry fun graduate_token<T>(
     // 4. Mark as graduated (disables bonding curve trading)
     coin_info.graduated = true;
 
-    // 5. TODO: Integrate with AMM
-    // This is where we'll integrate with AMM in the future
-    // For now, we'll store the liquidity and emit an event
-    
-    // TODO Step 1: Create bTokens and banks for both assets (if they don't exist)
-    // TODO: Check if SUI bToken/bank exists
-    // TODO: Check if our token bToken/bank exists  
-    // TODO: If not, create them using Suilend's methods
-    
-    // TODO Step 2: Create LP token for the new pool
-    // TODO: Create LP token using Suilend's LP token creation
-    
-    // TODO Step 3: Create pool and deposit initial liquidity
-    // TODO: Use equivalent of createPoolAndDepositInitialLiquidity
-    // TODO: Deposit accumulated_sui_balance + amm_reserve_tokens
-    
-    // TEMPORARY: For now, we'll transfer the liquidity to the creator
-    // In production, this should go to the AMM pool
+    // 5. MOCK STEAMM Integration (TODO: Replace with real STEAMM calls)
+
+    // STEP 1: Mock - Check/create bToken and bank for custom token
+    // TODO: Replace with real bank creation:
+    // let custom_token_bank = if (!has_bank_for_token<T>()) {
+    //     create_bank_for_token<T>(mock_registry, mock_lending_market, ctx)
+    // } else {
+    //     get_existing_bank<T>()
+    // };
+
+    // STEP 2: Mock - Create LP token type
+    // TODO: Replace with real LP token creation:
+    // let lp_treasury = create_lp_token_type<SUI, T>(ctx);
+
+    // STEP 3: Mock - Create AMM pool and deposit liquidity
+    let mock_pool_result = mock_create_amm_pool(
+        accumulated_sui_amount,
+        amm_reserve_tokens_minted,
+        mock_registry,
+        mock_lending_market,
+        mock_sui_bank,
+        ctx,
+    );
+
+    // Emit mock pool creation event
+    event::emit(MockPoolCreatedEvent {
+        pool_id: mock_pool_result.pool_id,
+        token_a_type: std::string::utf8(b"SUI"),
+        token_b_type: coin_info.coin_type,
+        initial_liquidity_a: accumulated_sui_amount,
+        initial_liquidity_b: amm_reserve_tokens_minted,
+        lp_tokens_minted: mock_pool_result.lp_token_amount,
+        creator,
+    });
+
+    // TODO: When real STEAMM is available, replace above with:
+    // let pool = pool::new<B_SUI, B_CUSTOM_TOKEN, CpQuoter, LP_TOKEN>(
+    //     mock_registry,
+    //     30, // fee tier bps
+    //     quoter,
+    //     sui_metadata,
+    //     custom_token_metadata,
+    //     &mut lp_metadata,
+    //     lp_treasury,
+    //     ctx
+    // );
+    //
+    // let (lp_tokens, _) = pool::deposit_liquidity(
+    //     &mut pool,
+    //     &mut sui_coin_from_accumulated,
+    //     &mut amm_reserve_tokens,
+    //     accumulated_sui_amount,
+    //     amm_reserve_tokens_minted,
+    //     ctx
+    // );
+
+    // For now, transfer liquidity to creator (will be replaced with LP tokens)
     transfer::public_transfer(coin::from_balance(accumulated_sui_balance, ctx), creator);
     transfer::public_transfer(amm_reserve_tokens, creator);
-    
-    // TODO: Replace above transfers with actual AMM pool creation
-    // let amm_pool_id = create_pool(accumulated_sui_balance, amm_reserve_tokens);
 
+    // Emit graduation event with mock pool info
     event::emit(TokenGraduatedEvent {
         coin_address,
         graduation_time: tx_context::epoch(ctx),
@@ -819,8 +942,45 @@ public entry fun graduate_token<T>(
         amm_reserve_tokens_minted,
         total_supply_in_circulation: coin_info.supply,
         creator,
-        amm_pool_id: option::none(), // TODO: Set to actual pool ID when implemented
+        amm_pool_id: option::some(mock_pool_result.pool_id), // Mock pool ID
     });
+}
+
+// === Mock Setup Functions for Testing ===
+
+/// Initialize mock STEAMM environment for testing
+/// Call this once to set up mock objects, then use them for graduation testing
+public entry fun setup_mock_steamm_environment(ctx: &mut TxContext) {
+    // Create mock objects
+    let mock_registry = create_mock_registry(ctx);
+    let mock_lending_market = create_mock_lending_market(ctx);
+    let mock_sui_bank = create_mock_sui_bank(ctx);
+
+    // Share them so they can be used in graduation calls
+    transfer::share_object(mock_registry);
+    transfer::share_object(mock_lending_market);
+    transfer::share_object(mock_sui_bank);
+}
+
+/// Test function to verify mock graduation works
+/// This can be called after creating a token and getting it to graduation threshold
+public entry fun test_graduation_with_mocks<T>(
+    launchpad: &mut token_launcher::Launchpad,
+    coin_info: &mut CoinInfo<T>,
+    mock_registry: &MockRegistry,
+    mock_lending_market: &MockLendingMarket,
+    mock_sui_bank: &MockBank,
+    ctx: &mut TxContext,
+) {
+    // Just call the regular graduation function
+    graduate_token<T>(
+        launchpad,
+        coin_info,
+        mock_registry,
+        mock_lending_market,
+        mock_sui_bank,
+        ctx,
+    );
 }
 
 // Helper function to estimate graduation readiness
@@ -830,13 +990,13 @@ public fun get_graduation_progress<T>(
 ): (u64, u64, u64) {
     let current_market_cap = calculate_market_cap(coin_info);
     let graduation_threshold = token_launcher::get_graduation_threshold(launchpad);
-    
+
     let progress_percentage = if (graduation_threshold > 0) {
         utils::as_u64(
             utils::div(
                 utils::mul(utils::from_u64(current_market_cap), utils::from_u64(10000)),
-                utils::from_u64(graduation_threshold)
-            )
+                utils::from_u64(graduation_threshold),
+            ),
         )
     } else {
         0
@@ -849,7 +1009,7 @@ public fun get_graduation_progress<T>(
 public fun get_estimated_amm_liquidity<T>(coin_info: &CoinInfo<T>): (u64, u64) {
     let estimated_sui_liquidity = balance::value(&coin_info.real_sui_reserves);
     let estimated_token_liquidity = coin_info.amm_reserve_tokens;
-    
+
     (estimated_sui_liquidity, estimated_token_liquidity)
 }
 
