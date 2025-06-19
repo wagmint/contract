@@ -91,7 +91,7 @@ public fun execute_graduation<T>(
     coin_b_metadata: &CoinMetadata<T>,
     clock: &Clock,
     ctx: &mut TxContext,
-): (u64, u64) {
+): (u64, u64, address) {
     // Add validation at the start
     assert!(!graduated, E_ALREADY_GRADUATED);
     assert!(
@@ -199,7 +199,7 @@ public fun execute_graduation<T>(
         amm_pool_id: option::some(position_address),
     });
 
-    (accumulated_sui_amount, amm_reserve_tokens_minted)
+    (accumulated_sui_amount, amm_reserve_tokens_minted, position_address)
 }
 
 // === View Functions ===
