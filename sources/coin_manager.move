@@ -1,8 +1,7 @@
 module wagmint::coin_manager;
 
 use cetus_clmm::config::GlobalConfig;
-use cetus_clmm::factory::{Self, Pools};
-use cetus_clmm::pool_creator;
+use cetus_clmm::factory::Pools;
 use std::string::{String, as_bytes};
 use sui::balance::{Self, Balance};
 use sui::clock::Clock;
@@ -12,6 +11,7 @@ use sui::sui::SUI;
 use sui::url::{Self, Url};
 use wagmint::battle_royale::{Self, BattleRoyale};
 use wagmint::bonding_curve;
+use wagmint::graduation;
 use wagmint::token_launcher::{Self, LaunchedCoinsRegistry};
 use wagmint::utils;
 
@@ -106,27 +106,6 @@ public struct TradeEvent has copy, drop {
     new_virtual_token_reserves: u64,
     new_real_sui_reserves: u64,
     new_real_token_reserves: u64,
-}
-
-public struct TokenGraduatedEvent has copy, drop {
-    coin_address: address,
-    graduation_time: u64,
-    final_bonding_curve_price: u64,
-    accumulated_sui_amount: u64,
-    amm_reserve_tokens_minted: u64,
-    total_supply_in_circulation: u64,
-    amm_pool_id: Option<address>,
-}
-
-public struct CetusPoolCreatedEvent has copy, drop {
-    pool_id: address,
-    position_id: address,
-    token_a_type: String,
-    token_b_type: String,
-    initial_liquidity_a: u64,
-    initial_liquidity_b: u64,
-    tick_spacing: u32,
-    sqrt_price: u128,
 }
 
 // === Utility Functions ===
@@ -478,20 +457,6 @@ public entry fun sell_tokens<T>(
 
 // === Graduation Functions ===
 
-/// Check if token meets graduation requirements
-public fun check_graduation_eligibility<T>(
-    launchpad: &token_launcher::Launchpad,
-    coin_info: &CoinInfo<T>,
-): bool {
-    if (coin_info.graduated) return false;
-
-    // Use real SUI reserves as graduation criteria instead of market cap
-    let sui_reserves = balance::value(&coin_info.real_sui_reserves);
-    let graduation_threshold = token_launcher::get_graduation_threshold(launchpad);
-    sui_reserves >= graduation_threshold
-}
-
-/// Graduate token to AMM (with mock STEAMM integration)
 public entry fun graduate_token<T>(
     launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
@@ -511,130 +476,43 @@ public entry fun graduate_token<T>(
     let coin_address = object::uid_to_address(&coin_info.id);
 
     // Extract all SUI from bonding curve
+    let real_sui_amount = balance::value(&coin_info.real_sui_reserves);
     let accumulated_sui_balance = balance::withdraw_all(&mut coin_info.real_sui_reserves);
-    let accumulated_sui_amount = balance::value(&accumulated_sui_balance);
 
-    // Mint reserved tokens for AMM (20% of total supply)
-    let amm_reserve_tokens = coin::mint(
+    // Delegate to graduation module
+    graduation::execute_graduation(
+        launchpad,
         &mut coin_info.protected_cap.cap,
+        accumulated_sui_balance,
         coin_info.amm_reserve_tokens,
-        ctx,
-    );
-    let amm_reserve_tokens_minted = coin::value(&amm_reserve_tokens);
-
-    // Mark as graduated (disables bonding curve)
-    coin_info.graduated = true;
-
-    // Create Cetus pool with accumulated liquidity
-    let sqrt_price = calculate_initial_sqrt_price(
-        accumulated_sui_amount,
-        amm_reserve_tokens_minted,
-    );
-
-    // Step 1: Create pool creation capability
-    let pool_creator_cap = factory::mint_pool_creation_cap<T>(
+        coin_address,
+        coin_info.coin_type,
+        final_bc_price,
+        coin_info.supply,
+        coin_info.graduated,
+        real_sui_amount,
         cetus_config,
         cetus_pools,
-        &mut coin_info.protected_cap.cap, // Need access to treasury cap
-        ctx,
-    );
-
-    // Step 2: Register the permission pair (Token/SUI with tick spacing 200)
-    factory::register_permission_pair<T, SUI>(
-        cetus_config,
-        cetus_pools,
-        200, // tick spacing
-        &pool_creator_cap,
-        ctx,
-    );
-
-    // Step 3: Create pool with the creation cap
-    let (tick_lower, tick_upper) = calculate_full_range_ticks();
-    // Step 3: Create pool with the creation cap (cap gets consumed here)
-    let (position, return_sui, return_tokens) = pool_creator::create_pool_v2_with_creation_cap<
-        T,
-        SUI,
-    >(
-        cetus_config,
-        cetus_pools,
-        &pool_creator_cap, // This should be consumed by the function
-        200, // tick spacing
-        sqrt_price,
-        std::string::utf8(b""), // pool icon URL
-        tick_lower,
-        tick_upper,
-        amm_reserve_tokens, // Token liquidity (coin A)
-        coin::from_balance(accumulated_sui_balance, ctx), // SUI liquidity (coin B)
-        coin_b_metadata, // Token metadata
-        coin_a_metadata, // SUI metadata
-        false, // fix_amount_a (try true first)
+        coin_a_metadata,
+        coin_b_metadata,
         clock,
         ctx,
     );
 
-    // Emit Cetus pool creation event
-    event::emit(CetusPoolCreatedEvent {
-        pool_id: object::id_to_address(&object::id(&position)), // Use position ID as pool reference
-        position_id: object::id_to_address(&object::id(&position)),
-        token_a_type: std::string::utf8(b"SUI"),
-        token_b_type: coin_info.coin_type,
-        initial_liquidity_a: accumulated_sui_amount,
-        initial_liquidity_b: amm_reserve_tokens_minted,
-        tick_spacing: 200,
-        sqrt_price,
-    });
-
-    // Transfer LP position to creator
-    let position_address = object::id_to_address(&object::id(&position));
-    let dead_address = @0x0000000000000000000000000000000000000000000000000000000000000000;
-    transfer::public_transfer(position, dead_address);
-    transfer::public_transfer(pool_creator_cap, dead_address);
-
-    // Handle returned coins - send any returns to protocol treasury
-    let protocol_treasury = token_launcher::get_admin(launchpad);
-    if (coin::value(&return_sui) > 0) {
-        transfer::public_transfer(return_sui, protocol_treasury);
-    } else {
-        coin::destroy_zero(return_sui);
-    };
-
-    if (coin::value(&return_tokens) > 0) {
-        transfer::public_transfer(return_tokens, protocol_treasury);
-    } else {
-        coin::destroy_zero(return_tokens);
-    };
-
-    event::emit(TokenGraduatedEvent {
-        coin_address,
-        graduation_time: tx_context::epoch(ctx),
-        final_bonding_curve_price: final_bc_price,
-        accumulated_sui_amount,
-        amm_reserve_tokens_minted,
-        total_supply_in_circulation: coin_info.supply,
-        amm_pool_id: option::some(position_address), // ✅ Use position ID as pool reference
-    });
+    // Mark as graduated (disables bonding curve)
+    coin_info.graduated = true;
 }
 
-/// Calculate sqrt price from token amounts (simplified)
-fun calculate_initial_sqrt_price(sui_amount: u64, token_amount: u64): u128 {
-    let price_ratio = utils::div(
-        utils::mul(utils::from_u64(sui_amount), utils::from_u64(1000000)),
-        utils::from_u64(token_amount),
-    );
-
-    let sqrt_ratio = utils::sqrt(price_ratio);
-
-    // Convert to Q64.64 format using bit shift (2^64)
-    sqrt_ratio << 64
-}
-
-/// Calculate full range ticks for maximum liquidity coverage
-fun calculate_full_range_ticks(): (u32, u32) {
-    // Use a conservative range well within Cetus limits
-    // Ensure both are multiples of tick_spacing (200)
-    let tick_lower: u32 = 4294867296; // Represents -100000 (multiple of 200)
-    let tick_upper: u32 = 100000; // +100000 (multiple of 200)
-    (tick_lower, tick_upper)
+/// Check if token meets graduation requirements
+public fun check_graduation_eligibility<T>(
+    launchpad: &token_launcher::Launchpad,
+    coin_info: &CoinInfo<T>,
+): bool {
+    graduation::check_graduation_eligibility(
+        launchpad,
+        balance::value(&coin_info.real_sui_reserves),
+        coin_info.graduated,
+    )
 }
 
 // === View Functions ===
@@ -659,25 +537,17 @@ public fun get_graduation_progress<T>(
     launchpad: &token_launcher::Launchpad,
     coin_info: &CoinInfo<T>,
 ): (u64, u64, u64) {
-    // Use SUI reserves instead of market cap for graduation progress
-    let current_sui_reserves = balance::value(&coin_info.real_sui_reserves);
-    let graduation_threshold = token_launcher::get_graduation_threshold(launchpad);
-
-    let progress_percentage = if (graduation_threshold > 0) {
-        utils::as_u64(
-            utils::div(
-                utils::mul(utils::from_u64(current_sui_reserves), utils::from_u64(10000)),
-                utils::from_u64(graduation_threshold),
-            ),
-        )
-    } else { 0 };
-
-    (current_sui_reserves, graduation_threshold, progress_percentage)
+    graduation::get_graduation_progress(
+        launchpad,
+        balance::value(&coin_info.real_sui_reserves),
+    )
 }
 
-/// Get estimated AMM liquidity upon graduation
 public fun get_estimated_amm_liquidity<T>(coin_info: &CoinInfo<T>): (u64, u64) {
-    (balance::value(&coin_info.real_sui_reserves), coin_info.amm_reserve_tokens)
+    graduation::get_estimated_amm_liquidity(
+        balance::value(&coin_info.real_sui_reserves),
+        coin_info.amm_reserve_tokens,
+    )
 }
 
 // === Simple Getters ===
