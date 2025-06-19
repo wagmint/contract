@@ -20,6 +20,7 @@ const DEFAULT_TOKEN_DECIMALS: u8 = 6;
 // New: Bonding curve allocation percentages (in basis points)
 const DEFAULT_BONDING_CURVE_BPS: u64 = 8000; // 80%
 const DEFAULT_AMM_RESERVE_BPS: u64 = 2000; // 20%
+const GRADUATED_SWAP_FEE_BPS: u64 = 25; // 0.25% swap fee for graduated tokens
 
 // Error codes
 const E_NOT_ADMIN: u64 = 0;
@@ -37,6 +38,7 @@ public struct Configuration has copy, store {
     graduation_threshold: u64,
     bonding_curve_bps: u64, // Percentage of tokens for bonding curve (in basis points)
     amm_reserve_bps: u64, // Percentage of tokens reserved for AMM (in basis points)
+    graduated_swap_fee_bps: u64, // Swap fee for graduated tokens (in basis points)
 }
 
 public struct Launchpad has key, store {
@@ -96,6 +98,7 @@ fun init(ctx: &mut TxContext) {
         graduation_threshold: GRADUATION_THRESHOLD,
         bonding_curve_bps: DEFAULT_BONDING_CURVE_BPS,
         amm_reserve_bps: DEFAULT_AMM_RESERVE_BPS,
+        graduated_swap_fee_bps: GRADUATED_SWAP_FEE_BPS,
     };
 
     let initial_virtual_sui = config.initial_virtual_sui;
@@ -321,6 +324,10 @@ public fun get_bonding_curve_bps(launchpad: &Launchpad): u64 {
 
 public fun get_amm_reserve_bps(launchpad: &Launchpad): u64 {
     launchpad.config.amm_reserve_bps
+}
+
+public fun get_graduated_swap_fee_bps(launchpad: &Launchpad): u64 {
+    launchpad.config.graduated_swap_fee_bps
 }
 
 public fun get_graduation_threshold(launchpad: &Launchpad): u64 {
