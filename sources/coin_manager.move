@@ -648,7 +648,7 @@ public entry fun swap_graduated_sui_to_token<T>(
         false, // a2b = false (SUI -> Token, so b2a)
         true, // by_amount_in = true (exact input)
         swap_amount, // amount (exact SUI amount to spend)
-        0, // sqrt_price_limit (no limit - we pre-validated)
+        cetus_clmm::tick_math::max_sqrt_price(), // sqrt_price_limit (no limit - we pre-validated)
         clock,
         ctx,
     );
@@ -699,7 +699,8 @@ public entry fun swap_graduated_sui_to_token<T>(
 public entry fun swap_graduated_token_to_sui<T>(
     launchpad: &mut token_launcher::Launchpad,
     coin_info: &CoinInfo<T>,
-    mut tokens: Coin<T>,
+    tokens: &mut Coin<T>,
+    token_amount: u64, 
     min_sui_out: u64,
     cetus_config: &cetus_clmm::config::GlobalConfig,
     cetus_pool: &mut cetus_clmm::pool::Pool<T, SUI>, // Note: T, SUI order
@@ -709,9 +710,9 @@ public entry fun swap_graduated_token_to_sui<T>(
     // Validate token is graduated and has pool
     assert!(coin_info.graduated, E_TOKEN_NOT_GRADUATED);
     assert!(option::is_some(&coin_info.cetus_pool_id), E_POOL_NOT_FOUND);
-
-    let token_amount = coin::value(&tokens);
     assert!(token_amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
+
+    let mut tokens_to_trade = coin::split(tokens, token_amount, ctx);
 
     // Pre-calculate swap result for slippage protection
     // Token → SUI is a2b direction since pool is <T, SUI>
@@ -744,12 +745,12 @@ public entry fun swap_graduated_token_to_sui<T>(
     let (in_amount, out_amount) = internal_swap<T, SUI>(
         cetus_config,
         cetus_pool,
-        &mut tokens, // coin_a (tokens - providing input)
+        &mut tokens_to_trade, // coin_a (tokens - providing input)
         &mut sui_coin, // coin_b (SUI - will receive output)
         true, // a2b = true (Token -> SUI)
         true, // by_amount_in = true (exact input)
         token_amount, // amount (exact token amount to spend)
-        0, // sqrt_price_limit (no limit - we pre-validated)
+        cetus_clmm::tick_math::min_sqrt_price(), // sqrt_price_limit (no limit - we pre-validated)
         clock,
         ctx,
     );
@@ -759,7 +760,7 @@ public entry fun swap_graduated_token_to_sui<T>(
     assert!(out_amount == expected_sui_out, E_SLIPPAGE_EXCEEDED_SELL);
 
     // Tokens should be consumed (zero remaining)
-    coin::destroy_zero(tokens);
+    coin::destroy_zero(tokens_to_trade);
 
     // Calculate and process platform fee (0.25% of received SUI)
     let actual_fee_amount = calculate_transaction_fee(out_amount, graduated_swap_fee_bps);
