@@ -107,6 +107,10 @@ public struct TradeEvent has copy, drop {
     new_virtual_token_reserves: u64,
     new_real_sui_reserves: u64,
     new_real_token_reserves: u64,
+    market_cap: Option<u64>,
+    cetus_pool_sui_liquidity: Option<u64>,
+    cetus_pool_token_liquidity: Option<u64>,
+    is_graduated_trade: bool,
 }
 
 // === Utility Functions ===
@@ -454,6 +458,10 @@ public entry fun buy_tokens<T>(
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
         new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
         new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
+        market_cap: option::none(),
+        cetus_pool_sui_liquidity: option::none(),
+        cetus_pool_token_liquidity: option::none(),
+        is_graduated_trade: false,
     });
 }
 
@@ -507,6 +515,10 @@ public entry fun sell_tokens<T>(
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
         new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
         new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
+        market_cap: option::none(),
+        cetus_pool_sui_liquidity: option::none(),
+        cetus_pool_token_liquidity: option::none(),
+        is_graduated_trade: false,
     });
 }
 
@@ -655,6 +667,11 @@ public entry fun swap_graduated_sui_to_token<T>(
     // Transfer tokens to user
     transfer::public_transfer(tokens_coin, tx_context::sender(ctx));
 
+    // Calculate graduated token metrics
+    let current_price = get_graduated_token_price_via_simulation(coin_info, cetus_pool);
+    let market_cap = calculate_graduated_market_cap(coin_info, current_price);
+    let (token_liquidity, sui_liquidity) = get_graduated_token_liquidity(cetus_pool);
+
     // Emit trade event
     let coin_address = object::uid_to_address(&coin_info.id);
     event::emit(TradeEvent {
@@ -666,11 +683,15 @@ public entry fun swap_graduated_sui_to_token<T>(
         platform_fee_amount: fee_amount,
         battle_royale_fee_amount: 0,
         new_supply: coin_info.supply, // Supply doesn't change for graduated tokens
-        new_price: 0, // Price determined by Cetus, not bonding curve
+        new_price: current_price, // Price determined by Cetus, not bonding curve
         new_virtual_sui_reserves: 0, // No longer relevant
         new_virtual_token_reserves: 0, // No longer relevant
         new_real_sui_reserves: 0, // No longer relevant
         new_real_token_reserves: 0, // No longer relevant
+        market_cap: option::some(market_cap),
+        cetus_pool_sui_liquidity: option::some(sui_liquidity),
+        cetus_pool_token_liquidity: option::some(token_liquidity),
+        is_graduated_trade: true,
     });
 }
 
@@ -757,6 +778,11 @@ public entry fun swap_graduated_token_to_sui<T>(
     // Transfer SUI to user
     transfer::public_transfer(sui_coin, tx_context::sender(ctx));
 
+    // Calculate graduated token metrics
+    let current_price = get_graduated_token_price_via_simulation(coin_info, cetus_pool);
+    let market_cap = calculate_graduated_market_cap(coin_info, current_price);
+    let (token_liquidity, sui_liquidity) = get_graduated_token_liquidity(cetus_pool);
+
     // Emit trade event
     let coin_address = object::uid_to_address(&coin_info.id);
     event::emit(TradeEvent {
@@ -768,11 +794,15 @@ public entry fun swap_graduated_token_to_sui<T>(
         platform_fee_amount: actual_fee_amount,
         battle_royale_fee_amount: 0,
         new_supply: coin_info.supply, // Supply doesn't change for graduated tokens
-        new_price: 0, // Price determined by Cetus, not bonding curve
+        new_price: current_price, // Price determined by Cetus, not bonding curve
         new_virtual_sui_reserves: 0, // No longer relevant
         new_virtual_token_reserves: 0, // No longer relevant
         new_real_sui_reserves: 0, // No longer relevant
         new_real_token_reserves: 0, // No longer relevant
+        market_cap: option::some(market_cap),
+        cetus_pool_sui_liquidity: option::some(sui_liquidity),
+        cetus_pool_token_liquidity: option::some(token_liquidity),
+        is_graduated_trade: true,
     });
 }
 
@@ -785,6 +815,44 @@ public fun get_cetus_pool_id<T>(coin_info: &CoinInfo<T>): Option<address> {
 /// Check if a token can be traded via Cetus
 public fun can_trade_via_cetus<T>(coin_info: &CoinInfo<T>): bool {
     coin_info.graduated && option::is_some(&coin_info.cetus_pool_id)
+}
+
+/// Get current price for graduated token using simulation
+fun get_graduated_token_price_via_simulation<T>(
+    coin_info: &CoinInfo<T>,
+    cetus_pool: &cetus_clmm::pool::Pool<T, SUI>,
+): u64 {
+    // Use 1 token in its smallest unit based on actual decimals
+    let token_decimals = coin_info.token_decimals;
+    let one_token = utils::as_u64(utils::pow(utils::from_u64(10), (token_decimals as u64)));
+
+    let calc_result = cetus_clmm::pool::calculate_swap_result<T, SUI>(
+        cetus_pool,
+        true, // a2b = true (Token -> SUI)
+        true, // by_amount_in = true
+        one_token, // 1 token in smallest unit (actual decimals)
+    );
+
+    if (cetus_clmm::pool::calculated_swap_result_is_exceed(&calc_result)) {
+        return 0
+    };
+
+    let sui_out = cetus_clmm::pool::calculated_swap_result_amount_out(&calc_result);
+    sui_out
+}
+
+/// Get Cetus pool liquidity for graduated token
+fun get_graduated_token_liquidity<T>(cetus_pool: &cetus_clmm::pool::Pool<T, SUI>): (u64, u64) {
+    let (balance_a, balance_b) = cetus_clmm::pool::balances(cetus_pool);
+    (balance::value(balance_a), balance::value(balance_b))
+}
+
+/// Calculate market cap for graduated token
+fun calculate_graduated_market_cap<T>(coin_info: &CoinInfo<T>, price: u64): u64 {
+    let total_supply = coin_info.supply;
+    utils::as_u64(
+        utils::mul(utils::from_u64(price), utils::from_u64(total_supply)),
+    )
 }
 
 // === View Functions ===
@@ -988,6 +1056,10 @@ public entry fun buy_tokens_with_br<T>(
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
         new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
         new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
+        market_cap: option::none(),
+        cetus_pool_sui_liquidity: option::none(),
+        cetus_pool_token_liquidity: option::none(),
+        is_graduated_trade: false,
     });
 }
 
@@ -1065,5 +1137,9 @@ public entry fun sell_tokens_with_br<T>(
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
         new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
         new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
+        market_cap: option::none(),
+        cetus_pool_sui_liquidity: option::none(),
+        cetus_pool_token_liquidity: option::none(),
+        is_graduated_trade: false,
     });
 }

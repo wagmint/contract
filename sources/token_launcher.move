@@ -74,6 +74,7 @@ public struct ConfigurationUpdatedEvent has copy, drop {
     old_token_decimals: u8,
     old_bonding_curve_bps: u64,
     old_amm_reserve_bps: u64,
+    old_graduated_swap_fee_bps: u64,
     new_version: u64,
     new_platform_fee: u64,
     new_creation_fee: u64,
@@ -84,6 +85,7 @@ public struct ConfigurationUpdatedEvent has copy, drop {
     new_token_decimals: u8,
     new_bonding_curve_bps: u64,
     new_amm_reserve_bps: u64,
+    new_graduated_swap_fee_bps: u64,
 }
 
 fun init(ctx: &mut TxContext) {
@@ -155,6 +157,7 @@ public entry fun update_launchpad_config(
     token_decimals: u8,
     bonding_curve_bps: u64,
     amm_reserve_bps: u64,
+    graduated_swap_fee_bps: u64,
     ctx: &mut TxContext,
 ) {
     assert!(lp.admin == tx_context::sender(ctx), E_NOT_ADMIN);
@@ -172,6 +175,7 @@ public entry fun update_launchpad_config(
     let old_token_decimals = lp.config.token_decimals;
     let old_bonding_curve_bps = lp.config.bonding_curve_bps;
     let old_amm_reserve_bps = lp.config.amm_reserve_bps;
+    let old_graduated_swap_fee_bps = lp.config.graduated_swap_fee_bps;
 
     lp.config.version = version;
     lp.config.platform_fee = platform_fee;
@@ -183,6 +187,7 @@ public entry fun update_launchpad_config(
     lp.config.token_decimals = token_decimals;
     lp.config.bonding_curve_bps = bonding_curve_bps;
     lp.config.amm_reserve_bps = amm_reserve_bps;
+    lp.config.graduated_swap_fee_bps = graduated_swap_fee_bps;
 
     // Emit an event when launchpad config is updated
     event::emit(ConfigurationUpdatedEvent {
@@ -196,6 +201,7 @@ public entry fun update_launchpad_config(
         old_token_decimals,
         old_bonding_curve_bps,
         old_amm_reserve_bps,
+        old_graduated_swap_fee_bps,
         new_version: version,
         new_platform_fee: platform_fee,
         new_creation_fee: creation_fee,
@@ -206,6 +212,7 @@ public entry fun update_launchpad_config(
         new_token_decimals: token_decimals,
         new_bonding_curve_bps: bonding_curve_bps,
         new_amm_reserve_bps: amm_reserve_bps,
+        new_graduated_swap_fee_bps: graduated_swap_fee_bps,
     });
 }
 
