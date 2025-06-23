@@ -17,16 +17,16 @@ use wagmint::utils;
 
 // === Error Codes ===
 const E_INVALID_NAME_LENGTH: u64 = 0;
-// const E_INVALID_SYMBOL_LENGTH: u64 = 1;
-const E_INSUFFICIENT_PAYMENT: u64 = 2;
-const E_INSUFFICIENT_BALANCE: u64 = 3;
-const E_AMOUNT_TOO_SMALL: u64 = 4;
-const E_ALREADY_GRADUATED: u64 = 6;
-const E_BATTLE_ROYALE_NOT_ACTIVE_FOR_TRADE: u64 = 7;
-const E_SLIPPAGE_EXCEEDED_BUY: u64 = 8;
-const E_SLIPPAGE_EXCEEDED_SELL: u64 = 9;
-const E_NOT_ELIGIBLE_FOR_GRADUATION: u64 = 10;
-// const E_GRADUATION_ALREADY_IN_PROGRESS: u64 = 11;
+const E_INSUFFICIENT_PAYMENT: u64 = 1;
+const E_INSUFFICIENT_BALANCE: u64 = 2;
+const E_AMOUNT_TOO_SMALL: u64 = 3;
+const E_ALREADY_GRADUATED: u64 = 4;
+const E_BATTLE_ROYALE_NOT_ACTIVE_FOR_TRADE: u64 = 5;
+const E_SLIPPAGE_EXCEEDED_BUY: u64 = 6;
+const E_SLIPPAGE_EXCEEDED_SELL: u64 = 7;
+const E_NOT_ELIGIBLE_FOR_GRADUATION: u64 = 8;
+const E_TOKEN_NOT_GRADUATED: u64 = 9;
+const E_POOL_NOT_FOUND: u64 = 10;
 
 // === Constants ===
 const MAX_NAME_LENGTH: u64 = 32;
@@ -67,6 +67,7 @@ public struct CoinInfo<phantom T> has key, store {
     virtual_sui_reserves: u64, // Virtual SUI for curve calculation
     // State
     graduated: bool, // Has token graduated to DEX?
+    cetus_pool_id: Option<address>, // Cetus pool ID after graduation
 }
 
 // === Events ===
@@ -106,6 +107,10 @@ public struct TradeEvent has copy, drop {
     new_virtual_token_reserves: u64,
     new_real_sui_reserves: u64,
     new_real_token_reserves: u64,
+    market_cap: Option<u64>,
+    cetus_pool_sui_liquidity: Option<u64>,
+    cetus_pool_token_liquidity: Option<u64>,
+    is_graduated_trade: bool,
 }
 
 // === Utility Functions ===
@@ -265,7 +270,7 @@ public fun create_coin_internal<T>(
         description,
         image_url: url::new_unsafe_from_bytes(*as_bytes(&image_url)),
         creator: tx_context::sender(ctx),
-        launch_time: tx_context::epoch(ctx),
+        launch_time: tx_context::epoch_timestamp_ms(ctx),
         coin_type,
         token_decimals,
         // Treasury and supply
@@ -282,6 +287,7 @@ public fun create_coin_internal<T>(
         virtual_sui_reserves: initial_virtual_sui,
         // State
         graduated: false,
+        cetus_pool_id: option::none(),
     };
 
     let coin_address = object::uid_to_address(&coin_info.id);
@@ -295,7 +301,7 @@ public fun create_coin_internal<T>(
         website,
         creator: tx_context::sender(ctx),
         coin_address,
-        launch_time: tx_context::epoch(ctx),
+        launch_time: tx_context::epoch_timestamp_ms(ctx),
         virtual_sui_reserves: coin_info.virtual_sui_reserves,
         virtual_token_reserves: coin_info.virtual_token_reserves,
         real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
@@ -314,6 +320,59 @@ public fun create_coin_internal<T>(
     transfer::share_object(coin_info);
 
     coin_address
+}
+
+/// Internal swap function using Cetus flash swap (without partner)
+fun internal_swap<CoinTypeA, CoinTypeB>(
+    config: &cetus_clmm::config::GlobalConfig,
+    pool: &mut cetus_clmm::pool::Pool<CoinTypeA, CoinTypeB>,
+    coin_a: &mut Coin<CoinTypeA>,
+    coin_b: &mut Coin<CoinTypeB>,
+    a2b: bool,
+    by_amount_in: bool,
+    amount: u64,
+    sqrt_price_limit: u128,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (u64, u64) {
+    // Returns (in_amount, out_amount)
+    // Flash swap first
+    let (receive_a, receive_b, flash_receipt) = cetus_clmm::pool::flash_swap<CoinTypeA, CoinTypeB>(
+        config,
+        pool,
+        a2b,
+        by_amount_in,
+        amount,
+        sqrt_price_limit,
+        clock,
+    );
+
+    let (in_amount, out_amount) = (
+        cetus_clmm::pool::swap_pay_amount(&flash_receipt),
+        if (a2b) balance::value(&receive_b) else balance::value(&receive_a),
+    );
+
+    // Pay for flash swap
+    let (pay_coin_a, pay_coin_b) = if (a2b) {
+        (coin::into_balance(coin::split(coin_a, in_amount, ctx)), balance::zero<CoinTypeB>())
+    } else {
+        (balance::zero<CoinTypeA>(), coin::into_balance(coin::split(coin_b, in_amount, ctx)))
+    };
+
+    // Add received coins to user's coins
+    coin::join(coin_b, coin::from_balance(receive_b, ctx));
+    coin::join(coin_a, coin::from_balance(receive_a, ctx));
+
+    // Repay flash swap
+    cetus_clmm::pool::repay_flash_swap<CoinTypeA, CoinTypeB>(
+        config,
+        pool,
+        pay_coin_a,
+        pay_coin_b,
+        flash_receipt,
+    );
+
+    (in_amount, out_amount)
 }
 
 // === Public Entry Functions ===
@@ -399,6 +458,10 @@ public entry fun buy_tokens<T>(
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
         new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
         new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
+        market_cap: option::none(),
+        cetus_pool_sui_liquidity: option::none(),
+        cetus_pool_token_liquidity: option::none(),
+        is_graduated_trade: false,
     });
 }
 
@@ -452,6 +515,10 @@ public entry fun sell_tokens<T>(
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
         new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
         new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
+        market_cap: option::none(),
+        cetus_pool_sui_liquidity: option::none(),
+        cetus_pool_token_liquidity: option::none(),
+        is_graduated_trade: false,
     });
 }
 
@@ -480,7 +547,7 @@ public entry fun graduate_token<T>(
     let accumulated_sui_balance = balance::withdraw_all(&mut coin_info.real_sui_reserves);
 
     // Delegate to graduation module
-    graduation::execute_graduation(
+    let (_, _, pool_id) = graduation::execute_graduation(
         launchpad,
         &mut coin_info.protected_cap.cap,
         accumulated_sui_balance,
@@ -501,6 +568,7 @@ public entry fun graduate_token<T>(
 
     // Mark as graduated (disables bonding curve)
     coin_info.graduated = true;
+    coin_info.cetus_pool_id = option::some(pool_id);
 }
 
 /// Check if token meets graduation requirements
@@ -512,6 +580,279 @@ public fun check_graduation_eligibility<T>(
         launchpad,
         balance::value(&coin_info.real_sui_reserves),
         coin_info.graduated,
+    )
+}
+
+// === Routing Functions ===
+
+/// Swap SUI for graduated tokens via Cetus
+public entry fun swap_graduated_sui_to_token<T>(
+    launchpad: &mut token_launcher::Launchpad,
+    coin_info: &CoinInfo<T>,
+    payment: &mut Coin<SUI>,
+    sui_amount: u64,
+    min_tokens_out: u64,
+    cetus_config: &cetus_clmm::config::GlobalConfig,
+    cetus_pool: &mut cetus_clmm::pool::Pool<T, SUI>, // Note: T, SUI order
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    // Validate token is graduated and has pool
+    assert!(coin_info.graduated, E_TOKEN_NOT_GRADUATED);
+    assert!(option::is_some(&coin_info.cetus_pool_id), E_POOL_NOT_FOUND);
+
+    // Validate minimum trade amount
+    assert!(sui_amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
+
+    // Calculate and deduct platform fee (0.25%)
+    let graduated_swap_fee_bps = token_launcher::get_graduated_swap_fee_bps(launchpad);
+    let fee_amount = calculate_transaction_fee(sui_amount, graduated_swap_fee_bps);
+    let swap_amount = sui_amount - fee_amount;
+
+    // Pre-calculate swap result for slippage protection
+    // SUI → Token is b2a direction since pool is <T, SUI>
+    let calc_result = cetus_clmm::pool::calculate_swap_result<T, SUI>(
+        cetus_pool,
+        false, // a2b = false (b2a: SUI -> Token)
+        true, // by_amount_in = true (exact input)
+        swap_amount, // amount (SUI amount after fee)
+    );
+
+    // Check for calculation errors
+    assert!(
+        !cetus_clmm::pool::calculated_swap_result_is_exceed(&calc_result),
+        E_SLIPPAGE_EXCEEDED_BUY,
+    );
+
+    // Validate slippage protection BEFORE executing swap
+    let expected_tokens_out = cetus_clmm::pool::calculated_swap_result_amount_out(&calc_result);
+    assert!(expected_tokens_out >= min_tokens_out, E_SLIPPAGE_EXCEEDED_BUY);
+
+    // Split exact amount from user's coin
+    let mut payment_coin = coin::split(payment, sui_amount, ctx);
+
+    // Process platform fee
+    let fee_coin = coin::split(&mut payment_coin, fee_amount, ctx);
+    let fee_balance = coin::into_balance(fee_coin);
+    token_launcher::add_to_treasury(launchpad, fee_balance);
+
+    // Prepare coins for swap
+    let mut tokens_coin = coin::zero<T>(ctx);
+
+    // Execute swap with confidence (we already validated slippage)
+    let (in_amount, out_amount) = internal_swap<T, SUI>(
+        cetus_config,
+        cetus_pool,
+        &mut tokens_coin, // coin_a (tokens - will receive output)
+        &mut payment_coin, // coin_b (SUI - providing input)
+        false, // a2b = false (SUI -> Token, so b2a)
+        true, // by_amount_in = true (exact input)
+        swap_amount, // amount (exact SUI amount to spend)
+        cetus_clmm::tick_math::max_sqrt_price(), // sqrt_price_limit (no limit - we pre-validated)
+        clock,
+        ctx,
+    );
+
+    // Sanity checks (should match pre-calculation)
+    assert!(in_amount == swap_amount, E_INSUFFICIENT_PAYMENT);
+    assert!(out_amount >= min_tokens_out, E_SLIPPAGE_EXCEEDED_BUY);
+
+    // Return any remaining SUI to user (should be zero for exact input)
+    if (coin::value(&payment_coin) > 0) {
+        coin::join(payment, payment_coin);
+    } else {
+        coin::destroy_zero(payment_coin);
+    };
+
+    // Transfer tokens to user
+    transfer::public_transfer(tokens_coin, tx_context::sender(ctx));
+
+    // Calculate graduated token metrics
+    let current_price = get_graduated_token_price_via_simulation(coin_info, cetus_pool);
+    let market_cap = calculate_graduated_market_cap(coin_info, current_price);
+    let (token_liquidity, sui_liquidity) = get_graduated_token_liquidity(cetus_pool);
+
+    // Emit trade event
+    let coin_address = object::uid_to_address(&coin_info.id);
+    event::emit(TradeEvent {
+        is_buy: true,
+        coin_address,
+        user_address: tx_context::sender(ctx),
+        token_amount: out_amount,
+        sui_amount: in_amount,
+        platform_fee_amount: fee_amount,
+        battle_royale_fee_amount: 0,
+        new_supply: coin_info.supply, // Supply doesn't change for graduated tokens
+        new_price: current_price, // Price determined by Cetus, not bonding curve
+        new_virtual_sui_reserves: 0, // No longer relevant
+        new_virtual_token_reserves: 0, // No longer relevant
+        new_real_sui_reserves: 0, // No longer relevant
+        new_real_token_reserves: 0, // No longer relevant
+        market_cap: option::some(market_cap),
+        cetus_pool_sui_liquidity: option::some(sui_liquidity),
+        cetus_pool_token_liquidity: option::some(token_liquidity),
+        is_graduated_trade: true,
+    });
+}
+
+/// Swap graduated tokens for SUI via Cetus
+public entry fun swap_graduated_token_to_sui<T>(
+    launchpad: &mut token_launcher::Launchpad,
+    coin_info: &CoinInfo<T>,
+    tokens: &mut Coin<T>,
+    token_amount: u64, 
+    min_sui_out: u64,
+    cetus_config: &cetus_clmm::config::GlobalConfig,
+    cetus_pool: &mut cetus_clmm::pool::Pool<T, SUI>, // Note: T, SUI order
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    // Validate token is graduated and has pool
+    assert!(coin_info.graduated, E_TOKEN_NOT_GRADUATED);
+    assert!(option::is_some(&coin_info.cetus_pool_id), E_POOL_NOT_FOUND);
+    assert!(token_amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
+
+    let mut tokens_to_trade = coin::split(tokens, token_amount, ctx);
+
+    // Pre-calculate swap result for slippage protection
+    // Token → SUI is a2b direction since pool is <T, SUI>
+    let calc_result = cetus_clmm::pool::calculate_swap_result<T, SUI>(
+        cetus_pool,
+        true, // a2b = true (Token -> SUI)
+        true, // by_amount_in = true (exact input)
+        token_amount, // amount (exact token amount)
+    );
+
+    // Check for calculation errors
+    assert!(
+        !cetus_clmm::pool::calculated_swap_result_is_exceed(&calc_result),
+        E_SLIPPAGE_EXCEEDED_SELL,
+    );
+
+    // Calculate expected SUI after our platform fee
+    let expected_sui_out = cetus_clmm::pool::calculated_swap_result_amount_out(&calc_result);
+    let graduated_swap_fee_bps = token_launcher::get_graduated_swap_fee_bps(launchpad);
+    let fee_amount = calculate_transaction_fee(expected_sui_out, graduated_swap_fee_bps);
+    let expected_sui_after_fee = expected_sui_out - fee_amount;
+
+    // Validate slippage protection BEFORE executing swap
+    assert!(expected_sui_after_fee >= min_sui_out, E_SLIPPAGE_EXCEEDED_SELL);
+
+    // Prepare coins for swap
+    let mut sui_coin = coin::zero<SUI>(ctx);
+
+    // Execute swap with confidence (we already validated slippage)
+    let (in_amount, out_amount) = internal_swap<T, SUI>(
+        cetus_config,
+        cetus_pool,
+        &mut tokens_to_trade, // coin_a (tokens - providing input)
+        &mut sui_coin, // coin_b (SUI - will receive output)
+        true, // a2b = true (Token -> SUI)
+        true, // by_amount_in = true (exact input)
+        token_amount, // amount (exact token amount to spend)
+        cetus_clmm::tick_math::min_sqrt_price(), // sqrt_price_limit (no limit - we pre-validated)
+        clock,
+        ctx,
+    );
+
+    // Sanity checks (should match pre-calculation)
+    assert!(in_amount == token_amount, E_INSUFFICIENT_BALANCE);
+    assert!(out_amount == expected_sui_out, E_SLIPPAGE_EXCEEDED_SELL);
+
+    // Tokens should be consumed (zero remaining)
+    coin::destroy_zero(tokens_to_trade);
+
+    // Calculate and process platform fee (0.25% of received SUI)
+    let actual_fee_amount = calculate_transaction_fee(out_amount, graduated_swap_fee_bps);
+    let fee_coin = coin::split(&mut sui_coin, actual_fee_amount, ctx);
+
+    // Add fee to treasury
+    let fee_balance = coin::into_balance(fee_coin);
+    token_launcher::add_to_treasury(launchpad, fee_balance);
+
+    // Remaining SUI after fee
+    let final_sui_amount = out_amount - actual_fee_amount;
+
+    // Final slippage check (should pass since we pre-calculated)
+    assert!(final_sui_amount >= min_sui_out, E_SLIPPAGE_EXCEEDED_SELL);
+
+    // Transfer SUI to user
+    transfer::public_transfer(sui_coin, tx_context::sender(ctx));
+
+    // Calculate graduated token metrics
+    let current_price = get_graduated_token_price_via_simulation(coin_info, cetus_pool);
+    let market_cap = calculate_graduated_market_cap(coin_info, current_price);
+    let (token_liquidity, sui_liquidity) = get_graduated_token_liquidity(cetus_pool);
+
+    // Emit trade event
+    let coin_address = object::uid_to_address(&coin_info.id);
+    event::emit(TradeEvent {
+        is_buy: false,
+        coin_address,
+        user_address: tx_context::sender(ctx),
+        token_amount: in_amount,
+        sui_amount: final_sui_amount,
+        platform_fee_amount: actual_fee_amount,
+        battle_royale_fee_amount: 0,
+        new_supply: coin_info.supply, // Supply doesn't change for graduated tokens
+        new_price: current_price, // Price determined by Cetus, not bonding curve
+        new_virtual_sui_reserves: 0, // No longer relevant
+        new_virtual_token_reserves: 0, // No longer relevant
+        new_real_sui_reserves: 0, // No longer relevant
+        new_real_token_reserves: 0, // No longer relevant
+        market_cap: option::some(market_cap),
+        cetus_pool_sui_liquidity: option::some(sui_liquidity),
+        cetus_pool_token_liquidity: option::some(token_liquidity),
+        is_graduated_trade: true,
+    });
+}
+
+// === Helper Functions ===
+/// Get the Cetus pool ID for a graduated token
+public fun get_cetus_pool_id<T>(coin_info: &CoinInfo<T>): Option<address> {
+    coin_info.cetus_pool_id
+}
+
+/// Check if a token can be traded via Cetus
+public fun can_trade_via_cetus<T>(coin_info: &CoinInfo<T>): bool {
+    coin_info.graduated && option::is_some(&coin_info.cetus_pool_id)
+}
+
+/// Get current price for graduated token using simulation
+fun get_graduated_token_price_via_simulation<T>(
+    coin_info: &CoinInfo<T>,
+    cetus_pool: &cetus_clmm::pool::Pool<T, SUI>,
+): u64 {
+    // Use 1 token in its smallest unit based on actual decimals
+    let token_decimals = coin_info.token_decimals;
+    let one_token = utils::as_u64(utils::pow(utils::from_u64(10), (token_decimals as u64)));
+
+    let calc_result = cetus_clmm::pool::calculate_swap_result<T, SUI>(
+        cetus_pool,
+        true, // a2b = true (Token -> SUI)
+        true, // by_amount_in = true
+        one_token, // 1 token in smallest unit (actual decimals)
+    );
+
+    if (cetus_clmm::pool::calculated_swap_result_is_exceed(&calc_result)) {
+        return 0
+    };
+
+    let sui_out = cetus_clmm::pool::calculated_swap_result_amount_out(&calc_result);
+    sui_out
+}
+
+/// Get Cetus pool liquidity for graduated token
+fun get_graduated_token_liquidity<T>(cetus_pool: &cetus_clmm::pool::Pool<T, SUI>): (u64, u64) {
+    let (balance_a, balance_b) = cetus_clmm::pool::balances(cetus_pool);
+    (balance::value(balance_a), balance::value(balance_b))
+}
+
+/// Calculate market cap for graduated token
+fun calculate_graduated_market_cap<T>(coin_info: &CoinInfo<T>, price: u64): u64 {
+    let total_supply = coin_info.supply;
+    utils::as_u64(
+        utils::mul(utils::from_u64(price), utils::from_u64(total_supply)),
     )
 }
 
@@ -647,7 +988,7 @@ public entry fun buy_tokens_with_br<T>(
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
-    let current_epoch = tx_context::epoch(ctx);
+    let current_epoch = tx_context::epoch_timestamp_ms(ctx);
     let coin_address = object::uid_to_address(&coin_info.id);
 
     // Validate battle royale eligibility
@@ -716,6 +1057,10 @@ public entry fun buy_tokens_with_br<T>(
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
         new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
         new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
+        market_cap: option::none(),
+        cetus_pool_sui_liquidity: option::none(),
+        cetus_pool_token_liquidity: option::none(),
+        is_graduated_trade: false,
     });
 }
 
@@ -728,7 +1073,7 @@ public entry fun sell_tokens_with_br<T>(
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
-    let current_epoch = tx_context::epoch(ctx);
+    let current_epoch = tx_context::epoch_timestamp_ms(ctx);
     let coin_address = object::uid_to_address(&coin_info.id);
     let token_amount = coin::value(&tokens);
 
@@ -793,5 +1138,9 @@ public entry fun sell_tokens_with_br<T>(
         new_virtual_token_reserves: coin_info.virtual_token_reserves,
         new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
         new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
+        market_cap: option::none(),
+        cetus_pool_sui_liquidity: option::none(),
+        cetus_pool_token_liquidity: option::none(),
+        is_graduated_trade: false,
     });
 }

@@ -72,8 +72,6 @@ fun calculate_full_range_ticks(): (u32, u32) {
 }
 
 /// Graduate token to AMM (Cetus integration)
-/// This function handles the core graduation logic and returns the necessary data
-/// for the calling module to update its state
 public fun execute_graduation<T>(
     launchpad: &mut token_launcher::Launchpad,
     treasury_cap: &mut TreasuryCap<T>,
@@ -91,15 +89,14 @@ public fun execute_graduation<T>(
     coin_b_metadata: &CoinMetadata<T>,
     clock: &Clock,
     ctx: &mut TxContext,
-): (u64, u64) {
-    // Add validation at the start
+): (u64, u64, address) {
+    // Validation at the start
     assert!(!graduated, E_ALREADY_GRADUATED);
     assert!(
         check_graduation_eligibility(launchpad, real_sui_reserves, graduated),
         E_NOT_ELIGIBLE_FOR_GRADUATION,
     );
 
-    // Returns (accumulated_sui_amount, amm_reserve_tokens_minted)
     let accumulated_sui_amount = balance::value(&accumulated_sui_balance);
 
     // Mint reserved tokens for AMM (20% of total supply)
@@ -110,7 +107,7 @@ public fun execute_graduation<T>(
     );
     let amm_reserve_tokens_minted = coin::value(&amm_reserve_tokens);
 
-    // Create Cetus pool with accumulated liquidity
+    // Calculate sqrt price
     let sqrt_price = calculate_initial_sqrt_price(
         accumulated_sui_amount,
         amm_reserve_tokens_minted,
@@ -133,7 +130,10 @@ public fun execute_graduation<T>(
         ctx,
     );
 
-    // Step 3: Create pool with the creation cap
+    // Step 3: Generate the pool key to get the pool ID later
+    let pool_key = factory::new_pool_key<T, SUI>(200);
+
+    // Step 4: Create pool with the creation cap
     let (tick_lower, tick_upper) = calculate_full_range_ticks();
     let (position, return_sui, return_tokens) = pool_creator::create_pool_v2_with_creation_cap<
         T,
@@ -156,20 +156,24 @@ public fun execute_graduation<T>(
         ctx,
     );
 
-    // Emit Cetus pool creation event
+    // Step 5: Get the actual pool ID using the pool key
+    let pool_info = factory::pool_simple_info(cetus_pools, pool_key);
+    let actual_pool_id = factory::pool_id(pool_info);
+    let pool_address = object::id_to_address(&actual_pool_id);
+
+    // Emit Cetus pool creation event with correct pool ID
     event::emit(CetusPoolCreatedEvent {
-        pool_id: object::id_to_address(&object::id(&position)),
+        pool_id: pool_address,
         position_id: object::id_to_address(&object::id(&position)),
-        token_a_type: string::utf8(b"SUI"),
-        token_b_type: coin_type,
-        initial_liquidity_a: accumulated_sui_amount,
-        initial_liquidity_b: amm_reserve_tokens_minted,
+        token_a_type: coin_type, // T comes first in T,SUI pair
+        token_b_type: string::utf8(b"SUI"),
+        initial_liquidity_a: amm_reserve_tokens_minted,
+        initial_liquidity_b: accumulated_sui_amount,
         tick_spacing: 200,
         sqrt_price,
     });
 
     // Transfer LP position and creation cap to dead address (burn them)
-    let position_address = object::id_to_address(&object::id(&position));
     let dead_address = @0x0000000000000000000000000000000000000000000000000000000000000000;
     transfer::public_transfer(position, dead_address);
     transfer::public_transfer(pool_creator_cap, dead_address);
@@ -188,18 +192,18 @@ public fun execute_graduation<T>(
         coin::destroy_zero(return_tokens);
     };
 
-    // Emit graduation event
+    // Emit graduation event with correct pool ID
     event::emit(TokenGraduatedEvent {
         coin_address,
-        graduation_time: tx_context::epoch(ctx),
+        graduation_time: tx_context::epoch_timestamp_ms(ctx),
         final_bonding_curve_price: final_bc_price,
         accumulated_sui_amount,
         amm_reserve_tokens_minted,
         total_supply_in_circulation,
-        amm_pool_id: option::some(position_address),
+        amm_pool_id: option::some(pool_address), // Use actual pool address
     });
 
-    (accumulated_sui_amount, amm_reserve_tokens_minted)
+    (accumulated_sui_amount, amm_reserve_tokens_minted, pool_address)
 }
 
 // === View Functions ===

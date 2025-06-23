@@ -20,6 +20,7 @@ const DEFAULT_TOKEN_DECIMALS: u8 = 6;
 // New: Bonding curve allocation percentages (in basis points)
 const DEFAULT_BONDING_CURVE_BPS: u64 = 8000; // 80%
 const DEFAULT_AMM_RESERVE_BPS: u64 = 2000; // 20%
+const GRADUATED_SWAP_FEE_BPS: u64 = 25; // 0.25% swap fee for graduated tokens
 
 // Error codes
 const E_NOT_ADMIN: u64 = 0;
@@ -37,6 +38,7 @@ public struct Configuration has copy, store {
     graduation_threshold: u64,
     bonding_curve_bps: u64, // Percentage of tokens for bonding curve (in basis points)
     amm_reserve_bps: u64, // Percentage of tokens reserved for AMM (in basis points)
+    graduated_swap_fee_bps: u64, // Swap fee for graduated tokens (in basis points)
 }
 
 public struct Launchpad has key, store {
@@ -72,6 +74,7 @@ public struct ConfigurationUpdatedEvent has copy, drop {
     old_token_decimals: u8,
     old_bonding_curve_bps: u64,
     old_amm_reserve_bps: u64,
+    old_graduated_swap_fee_bps: u64,
     new_version: u64,
     new_platform_fee: u64,
     new_creation_fee: u64,
@@ -82,6 +85,7 @@ public struct ConfigurationUpdatedEvent has copy, drop {
     new_token_decimals: u8,
     new_bonding_curve_bps: u64,
     new_amm_reserve_bps: u64,
+    new_graduated_swap_fee_bps: u64,
 }
 
 fun init(ctx: &mut TxContext) {
@@ -96,6 +100,7 @@ fun init(ctx: &mut TxContext) {
         graduation_threshold: GRADUATION_THRESHOLD,
         bonding_curve_bps: DEFAULT_BONDING_CURVE_BPS,
         amm_reserve_bps: DEFAULT_AMM_RESERVE_BPS,
+        graduated_swap_fee_bps: GRADUATED_SWAP_FEE_BPS,
     };
 
     let initial_virtual_sui = config.initial_virtual_sui;
@@ -152,6 +157,7 @@ public entry fun update_launchpad_config(
     token_decimals: u8,
     bonding_curve_bps: u64,
     amm_reserve_bps: u64,
+    graduated_swap_fee_bps: u64,
     ctx: &mut TxContext,
 ) {
     assert!(lp.admin == tx_context::sender(ctx), E_NOT_ADMIN);
@@ -169,6 +175,7 @@ public entry fun update_launchpad_config(
     let old_token_decimals = lp.config.token_decimals;
     let old_bonding_curve_bps = lp.config.bonding_curve_bps;
     let old_amm_reserve_bps = lp.config.amm_reserve_bps;
+    let old_graduated_swap_fee_bps = lp.config.graduated_swap_fee_bps;
 
     lp.config.version = version;
     lp.config.platform_fee = platform_fee;
@@ -180,6 +187,7 @@ public entry fun update_launchpad_config(
     lp.config.token_decimals = token_decimals;
     lp.config.bonding_curve_bps = bonding_curve_bps;
     lp.config.amm_reserve_bps = amm_reserve_bps;
+    lp.config.graduated_swap_fee_bps = graduated_swap_fee_bps;
 
     // Emit an event when launchpad config is updated
     event::emit(ConfigurationUpdatedEvent {
@@ -193,6 +201,7 @@ public entry fun update_launchpad_config(
         old_token_decimals,
         old_bonding_curve_bps,
         old_amm_reserve_bps,
+        old_graduated_swap_fee_bps,
         new_version: version,
         new_platform_fee: platform_fee,
         new_creation_fee: creation_fee,
@@ -203,6 +212,7 @@ public entry fun update_launchpad_config(
         new_token_decimals: token_decimals,
         new_bonding_curve_bps: bonding_curve_bps,
         new_amm_reserve_bps: amm_reserve_bps,
+        new_graduated_swap_fee_bps: graduated_swap_fee_bps,
     });
 }
 
@@ -321,6 +331,10 @@ public fun get_bonding_curve_bps(launchpad: &Launchpad): u64 {
 
 public fun get_amm_reserve_bps(launchpad: &Launchpad): u64 {
     launchpad.config.amm_reserve_bps
+}
+
+public fun get_graduated_swap_fee_bps(launchpad: &Launchpad): u64 {
+    launchpad.config.graduated_swap_fee_bps
 }
 
 public fun get_graduation_threshold(launchpad: &Launchpad): u64 {
