@@ -191,7 +191,7 @@ public fun execute_graduation<T>(
     // Emit graduation event
     event::emit(TokenGraduatedEvent {
         coin_address,
-        graduation_time: tx_context::epoch(ctx),
+        graduation_time: tx_context::epoch_timestamp_ms(ctx),
         final_bonding_curve_price: final_bc_price,
         accumulated_sui_amount,
         amm_reserve_tokens_minted,

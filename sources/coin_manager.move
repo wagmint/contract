@@ -270,7 +270,7 @@ public fun create_coin_internal<T>(
         description,
         image_url: url::new_unsafe_from_bytes(*as_bytes(&image_url)),
         creator: tx_context::sender(ctx),
-        launch_time: tx_context::epoch(ctx),
+        launch_time: tx_context::epoch_timestamp_ms(ctx),
         coin_type,
         token_decimals,
         // Treasury and supply
@@ -301,7 +301,7 @@ public fun create_coin_internal<T>(
         website,
         creator: tx_context::sender(ctx),
         coin_address,
-        launch_time: tx_context::epoch(ctx),
+        launch_time: tx_context::epoch_timestamp_ms(ctx),
         virtual_sui_reserves: coin_info.virtual_sui_reserves,
         virtual_token_reserves: coin_info.virtual_token_reserves,
         real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
@@ -988,7 +988,7 @@ public entry fun buy_tokens_with_br<T>(
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
-    let current_epoch = tx_context::epoch(ctx);
+    let current_epoch = tx_context::epoch_timestamp_ms(ctx);
     let coin_address = object::uid_to_address(&coin_info.id);
 
     // Validate battle royale eligibility
@@ -1073,7 +1073,7 @@ public entry fun sell_tokens_with_br<T>(
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
-    let current_epoch = tx_context::epoch(ctx);
+    let current_epoch = tx_context::epoch_timestamp_ms(ctx);
     let coin_address = object::uid_to_address(&coin_info.id);
     let token_amount = coin::value(&tokens);
 
