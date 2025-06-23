@@ -27,6 +27,7 @@ const E_SLIPPAGE_EXCEEDED_SELL: u64 = 7;
 const E_NOT_ELIGIBLE_FOR_GRADUATION: u64 = 8;
 const E_TOKEN_NOT_GRADUATED: u64 = 9;
 const E_POOL_NOT_FOUND: u64 = 10;
+const E_GRADUATED_DURING_TRANSACTION: u64 = 11;
 
 // === Constants ===
 const MAX_NAME_LENGTH: u64 = 32;
@@ -51,6 +52,7 @@ public struct CoinInfo<phantom T> has key, store {
     creator: address,
     launch_time: u64,
     coin_type: String,
+    coin_metadata_id: address,
     token_decimals: u8,
     // Treasury and supply tracking
     protected_cap: ProtectedTreasuryCap<T>,
@@ -90,6 +92,7 @@ public struct CoinCreatedEvent has copy, drop {
     total_token_supply: u64,
     token_decimals: u8,
     coin_type: String,
+    coin_metadata_id: address,
     br_address: Option<address>,
 }
 
@@ -230,6 +233,7 @@ public fun create_coin_internal<T>(
     website: String,
     image_url: String,
     coin_type: String,
+    coin_metadata_id: address,
     br_address: Option<address>,
     ctx: &mut TxContext,
 ): address {
@@ -272,6 +276,7 @@ public fun create_coin_internal<T>(
         creator: tx_context::sender(ctx),
         launch_time: tx_context::epoch_timestamp_ms(ctx),
         coin_type,
+        coin_metadata_id,
         token_decimals,
         // Treasury and supply
         protected_cap,
@@ -311,6 +316,7 @@ public fun create_coin_internal<T>(
         total_token_supply: coin_info.total_token_supply,
         token_decimals,
         coin_type: coin_info.coin_type,
+        coin_metadata_id: coin_info.coin_metadata_id,
         br_address,
     });
 
@@ -389,6 +395,7 @@ public entry fun create_coin<T>(
     website: String,
     image_url: String,
     coin_type: String,
+    coin_metadata_id: address,
     ctx: &mut TxContext,
 ): address {
     create_coin_internal(
@@ -402,6 +409,7 @@ public entry fun create_coin<T>(
         website,
         image_url,
         coin_type,
+        coin_metadata_id,
         option::none(),
         ctx,
     )
@@ -414,55 +422,124 @@ public entry fun buy_tokens<T>(
     payment: Coin<SUI>,
     sui_amount: u64,
     min_tokens_out: u64,
+    cetus_config: &GlobalConfig,
+    cetus_pools: &mut Pools,
+    coin_a_metadata: &CoinMetadata<SUI>,
+    coin_b_metadata: &CoinMetadata<T>,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     // Validate inputs
     assert!(sui_amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
 
-    // Check slippage protection
-    let expected_tokens = bonding_curve::calculate_tokens_to_mint(
-        coin_info.virtual_sui_reserves,
-        coin_info.virtual_token_reserves,
-        sui_amount,
-    );
-    assert!(expected_tokens >= min_tokens_out, E_SLIPPAGE_EXCEEDED_BUY);
+    // CRITICAL: Check graduation status at execution time
+    if (coin_info.graduated) {
+        // Return payment and fail gracefully
+        transfer::public_transfer(payment, tx_context::sender(ctx));
+        abort E_ALREADY_GRADUATED
+    };
 
-    // Process purchase
-    let (tokens_to_mint, platform_fee_amount) = buy_tokens_helper(
-        launchpad,
-        coin_info,
-        payment,
-        sui_amount,
-        ctx,
-    );
+    // Check if THIS transaction would trigger graduation
+    if (would_trigger_graduation(launchpad, coin_info, sui_amount)) {
+        // Double-check before proceeding (race condition protection)
+        if (coin_info.graduated) {
+            // Another transaction graduated it first
+            transfer::public_transfer(payment, tx_context::sender(ctx));
+            abort E_GRADUATED_DURING_TRANSACTION
+        };
 
-    // Transfer tokens to buyer
-    let tokens = coin::take(&mut coin_info.real_token_reserves, tokens_to_mint, ctx);
-    transfer::public_transfer(tokens, tx_context::sender(ctx));
+        // We're the ones triggering graduation - proceed with trade first
+        let (tokens_to_mint, platform_fee_amount) = buy_tokens_helper(
+            launchpad,
+            coin_info,
+            payment,
+            sui_amount,
+            ctx,
+        );
 
-    // Update supply and emit event
-    coin_info.supply = coin_info.supply + tokens_to_mint;
-    let new_price = get_current_price(coin_info);
+        // Transfer tokens to buyer
+        let tokens = coin::take(&mut coin_info.real_token_reserves, tokens_to_mint, ctx);
+        transfer::public_transfer(tokens, tx_context::sender(ctx));
 
-    event::emit(TradeEvent {
-        is_buy: true,
-        coin_address: object::uid_to_address(&coin_info.id),
-        user_address: tx_context::sender(ctx),
-        token_amount: tokens_to_mint,
-        sui_amount,
-        platform_fee_amount,
-        battle_royale_fee_amount: 0,
-        new_supply: coin_info.supply,
-        new_price,
-        new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
-        new_virtual_token_reserves: coin_info.virtual_token_reserves,
-        new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
-        new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
-        market_cap: option::none(),
-        cetus_pool_sui_liquidity: option::none(),
-        cetus_pool_token_liquidity: option::none(),
-        is_graduated_trade: false,
-    });
+        // Update supply
+        coin_info.supply = coin_info.supply + tokens_to_mint;
+
+        // Graduate the token automatically
+        graduate_token(
+            launchpad,
+            coin_info,
+            cetus_config,
+            cetus_pools,
+            coin_a_metadata,
+            coin_b_metadata,
+            clock,
+            ctx,
+        );
+
+        // Emit event (after graduation)
+        let new_price = get_current_price(coin_info);
+        event::emit(TradeEvent {
+            is_buy: true,
+            coin_address: object::uid_to_address(&coin_info.id),
+            user_address: tx_context::sender(ctx),
+            token_amount: tokens_to_mint,
+            sui_amount,
+            platform_fee_amount,
+            battle_royale_fee_amount: 0,
+            new_supply: coin_info.supply,
+            new_price,
+            new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
+            new_virtual_token_reserves: coin_info.virtual_token_reserves,
+            new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+            new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
+            market_cap: option::none(),
+            cetus_pool_sui_liquidity: option::none(),
+            cetus_pool_token_liquidity: option::none(),
+            is_graduated_trade: false,
+        });
+    } else {
+        // Normal bonding curve trade (existing logic)
+        let expected_tokens = bonding_curve::calculate_tokens_to_mint(
+            coin_info.virtual_sui_reserves,
+            coin_info.virtual_token_reserves,
+            sui_amount,
+        );
+        assert!(expected_tokens >= min_tokens_out, E_SLIPPAGE_EXCEEDED_BUY);
+
+        let (tokens_to_mint, platform_fee_amount) = buy_tokens_helper(
+            launchpad,
+            coin_info,
+            payment,
+            sui_amount,
+            ctx,
+        );
+
+        let tokens = coin::take(&mut coin_info.real_token_reserves, tokens_to_mint, ctx);
+        transfer::public_transfer(tokens, tx_context::sender(ctx));
+
+        coin_info.supply = coin_info.supply + tokens_to_mint;
+        let new_price = get_current_price(coin_info);
+
+        event::emit(TradeEvent {
+            is_buy: true,
+            coin_address: object::uid_to_address(&coin_info.id),
+            user_address: tx_context::sender(ctx),
+            token_amount: tokens_to_mint,
+            sui_amount,
+            platform_fee_amount,
+            battle_royale_fee_amount: 0,
+            new_supply: coin_info.supply,
+            new_price,
+            new_virtual_sui_reserves: coin_info.virtual_sui_reserves,
+            new_virtual_token_reserves: coin_info.virtual_token_reserves,
+            new_real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
+            new_real_token_reserves: balance::value(&coin_info.real_token_reserves),
+            market_cap: option::none(),
+            cetus_pool_sui_liquidity: option::none(),
+            cetus_pool_token_liquidity: option::none(),
+            is_graduated_trade: false,
+        });
+    }
 }
 
 /// Sell tokens back to bonding curve
@@ -583,6 +660,20 @@ public fun check_graduation_eligibility<T>(
     )
 }
 
+/// Check if this trade would trigger graduation
+fun would_trigger_graduation<T>(
+    launchpad: &token_launcher::Launchpad,
+    coin_info: &CoinInfo<T>,
+    sui_amount: u64,
+): bool {
+    if (coin_info.graduated) return false;
+
+    let current_reserves = balance::value(&coin_info.real_sui_reserves);
+    let graduation_threshold = token_launcher::get_graduation_threshold(launchpad);
+
+    (current_reserves + sui_amount) >= graduation_threshold
+}
+
 // === Routing Functions ===
 
 /// Swap SUI for graduated tokens via Cetus
@@ -700,7 +791,7 @@ public entry fun swap_graduated_token_to_sui<T>(
     launchpad: &mut token_launcher::Launchpad,
     coin_info: &CoinInfo<T>,
     tokens: &mut Coin<T>,
-    token_amount: u64, 
+    token_amount: u64,
     min_sui_out: u64,
     cetus_config: &cetus_clmm::config::GlobalConfig,
     cetus_pool: &mut cetus_clmm::pool::Pool<T, SUI>, // Note: T, SUI order
@@ -956,6 +1047,7 @@ public entry fun create_coin_for_br<T>(
     website: String,
     image_url: String,
     coin_type: String,
+    coin_metadata_id: address,
     ctx: &mut TxContext,
 ): address {
     let br_address = battle_royale::get_address(battle_royale);
@@ -970,6 +1062,7 @@ public entry fun create_coin_for_br<T>(
         website,
         image_url,
         coin_type,
+        coin_metadata_id,
         option::some(br_address),
         ctx,
     );
