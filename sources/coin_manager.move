@@ -27,6 +27,7 @@ const E_SLIPPAGE_EXCEEDED_SELL: u64 = 7;
 const E_NOT_ELIGIBLE_FOR_GRADUATION: u64 = 8;
 const E_TOKEN_NOT_GRADUATED: u64 = 9;
 const E_POOL_NOT_FOUND: u64 = 10;
+const E_TRADING_LOCKED: u64 = 11;
 
 // === Constants ===
 const MAX_NAME_LENGTH: u64 = 32;
@@ -51,6 +52,7 @@ public struct CoinInfo<phantom T> has key, store {
     creator: address,
     launch_time: u64,
     coin_type: String,
+    coin_metadata_id: address,
     token_decimals: u8,
     // Treasury and supply tracking
     protected_cap: ProtectedTreasuryCap<T>,
@@ -68,6 +70,7 @@ public struct CoinInfo<phantom T> has key, store {
     // State
     graduated: bool, // Has token graduated to DEX?
     cetus_pool_id: Option<address>, // Cetus pool ID after graduation
+    graduation_locked: bool,
 }
 
 // === Events ===
@@ -90,6 +93,7 @@ public struct CoinCreatedEvent has copy, drop {
     total_token_supply: u64,
     token_decimals: u8,
     coin_type: String,
+    coin_metadata_id: address,
     br_address: Option<address>,
 }
 
@@ -111,6 +115,7 @@ public struct TradeEvent has copy, drop {
     cetus_pool_sui_liquidity: Option<u64>,
     cetus_pool_token_liquidity: Option<u64>,
     is_graduated_trade: bool,
+    is_eligible_for_graduation: Option<bool>,
 }
 
 // === Utility Functions ===
@@ -230,6 +235,7 @@ public fun create_coin_internal<T>(
     website: String,
     image_url: String,
     coin_type: String,
+    coin_metadata_id: address,
     br_address: Option<address>,
     ctx: &mut TxContext,
 ): address {
@@ -272,6 +278,7 @@ public fun create_coin_internal<T>(
         creator: tx_context::sender(ctx),
         launch_time: tx_context::epoch_timestamp_ms(ctx),
         coin_type,
+        coin_metadata_id,
         token_decimals,
         // Treasury and supply
         protected_cap,
@@ -288,6 +295,7 @@ public fun create_coin_internal<T>(
         // State
         graduated: false,
         cetus_pool_id: option::none(),
+        graduation_locked: false,
     };
 
     let coin_address = object::uid_to_address(&coin_info.id);
@@ -311,6 +319,7 @@ public fun create_coin_internal<T>(
         total_token_supply: coin_info.total_token_supply,
         token_decimals,
         coin_type: coin_info.coin_type,
+        coin_metadata_id: coin_info.coin_metadata_id,
         br_address,
     });
 
@@ -389,6 +398,7 @@ public entry fun create_coin<T>(
     website: String,
     image_url: String,
     coin_type: String,
+    coin_metadata_id: address,
     ctx: &mut TxContext,
 ): address {
     create_coin_internal(
@@ -402,6 +412,7 @@ public entry fun create_coin<T>(
         website,
         image_url,
         coin_type,
+        coin_metadata_id,
         option::none(),
         ctx,
     )
@@ -419,6 +430,10 @@ public entry fun buy_tokens<T>(
     // Validate inputs
     assert!(sui_amount >= MIN_TRADE_AMOUNT, E_AMOUNT_TOO_SMALL);
 
+    // CRITICAL: Check if trading is locked or graduated
+    assert!(!coin_info.graduation_locked, E_TRADING_LOCKED);
+    assert!(!coin_info.graduated, E_ALREADY_GRADUATED);
+
     // Check slippage protection
     let expected_tokens = bonding_curve::calculate_tokens_to_mint(
         coin_info.virtual_sui_reserves,
@@ -426,6 +441,9 @@ public entry fun buy_tokens<T>(
         sui_amount,
     );
     assert!(expected_tokens >= min_tokens_out, E_SLIPPAGE_EXCEEDED_BUY);
+
+    // Check if THIS transaction would trigger graduation eligibility
+    let will_trigger_graduation = would_trigger_graduation(launchpad, coin_info, sui_amount);
 
     // Process purchase
     let (tokens_to_mint, platform_fee_amount) = buy_tokens_helper(
@@ -440,10 +458,19 @@ public entry fun buy_tokens<T>(
     let tokens = coin::take(&mut coin_info.real_token_reserves, tokens_to_mint, ctx);
     transfer::public_transfer(tokens, tx_context::sender(ctx));
 
-    // Update supply and emit event
+    // Update supply
     coin_info.supply = coin_info.supply + tokens_to_mint;
+
+    // If this trade triggered graduation eligibility, LOCK trading
+    if (will_trigger_graduation) {
+        coin_info.graduation_locked = true;
+    };
+
+    // Check graduation eligibility after the trade
+    let is_eligible_for_graduation = check_graduation_eligibility(launchpad, coin_info);
     let new_price = get_current_price(coin_info);
 
+    // Emit event with graduation eligibility info
     event::emit(TradeEvent {
         is_buy: true,
         coin_address: object::uid_to_address(&coin_info.id),
@@ -462,6 +489,7 @@ public entry fun buy_tokens<T>(
         cetus_pool_sui_liquidity: option::none(),
         cetus_pool_token_liquidity: option::none(),
         is_graduated_trade: false,
+        is_eligible_for_graduation: option::some(is_eligible_for_graduation),
     });
 }
 
@@ -473,6 +501,7 @@ public entry fun sell_tokens<T>(
     min_sui_out: u64,
     ctx: &mut TxContext,
 ) {
+    assert!(!coin_info.graduation_locked, E_TRADING_LOCKED);
     let token_amount = coin::value(&tokens);
 
     // Check slippage protection
@@ -519,6 +548,7 @@ public entry fun sell_tokens<T>(
         cetus_pool_sui_liquidity: option::none(),
         cetus_pool_token_liquidity: option::none(),
         is_graduated_trade: false,
+        is_eligible_for_graduation: option::none(),
     });
 }
 
@@ -534,8 +564,9 @@ public entry fun graduate_token<T>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    // Validate graduation eligibility
+    // Validate graduation eligibility - must be locked for graduation
     assert!(!coin_info.graduated, E_ALREADY_GRADUATED);
+    assert!(coin_info.graduation_locked, E_TRADING_LOCKED);
     assert!(check_graduation_eligibility(launchpad, coin_info), E_NOT_ELIGIBLE_FOR_GRADUATION);
 
     // Store values before state changes
@@ -581,6 +612,20 @@ public fun check_graduation_eligibility<T>(
         balance::value(&coin_info.real_sui_reserves),
         coin_info.graduated,
     )
+}
+
+/// Check if this trade would trigger graduation
+fun would_trigger_graduation<T>(
+    launchpad: &token_launcher::Launchpad,
+    coin_info: &CoinInfo<T>,
+    sui_amount: u64,
+): bool {
+    if (coin_info.graduated) return false;
+
+    let current_reserves = balance::value(&coin_info.real_sui_reserves);
+    let graduation_threshold = token_launcher::get_graduation_threshold(launchpad);
+
+    (current_reserves + sui_amount) >= graduation_threshold
 }
 
 // === Routing Functions ===
@@ -692,6 +737,7 @@ public entry fun swap_graduated_sui_to_token<T>(
         cetus_pool_sui_liquidity: option::some(sui_liquidity),
         cetus_pool_token_liquidity: option::some(token_liquidity),
         is_graduated_trade: true,
+        is_eligible_for_graduation: option::none(),
     });
 }
 
@@ -700,7 +746,7 @@ public entry fun swap_graduated_token_to_sui<T>(
     launchpad: &mut token_launcher::Launchpad,
     coin_info: &CoinInfo<T>,
     tokens: &mut Coin<T>,
-    token_amount: u64, 
+    token_amount: u64,
     min_sui_out: u64,
     cetus_config: &cetus_clmm::config::GlobalConfig,
     cetus_pool: &mut cetus_clmm::pool::Pool<T, SUI>, // Note: T, SUI order
@@ -804,6 +850,7 @@ public entry fun swap_graduated_token_to_sui<T>(
         cetus_pool_sui_liquidity: option::some(sui_liquidity),
         cetus_pool_token_liquidity: option::some(token_liquidity),
         is_graduated_trade: true,
+        is_eligible_for_graduation: option::none(),
     });
 }
 
@@ -929,6 +976,8 @@ public fun get_amm_reserve_tokens<T>(info: &CoinInfo<T>): u64 { info.amm_reserve
 
 public fun get_bonding_curve_tokens<T>(info: &CoinInfo<T>): u64 { info.bonding_curve_tokens }
 
+public fun is_graduation_locked<T>(info: &CoinInfo<T>): bool { info.graduation_locked }
+
 public fun get_coin_info<T>(info: &CoinInfo<T>): (String, String, Url, address, u64, u64) {
     (
         info.name,
@@ -956,6 +1005,7 @@ public entry fun create_coin_for_br<T>(
     website: String,
     image_url: String,
     coin_type: String,
+    coin_metadata_id: address,
     ctx: &mut TxContext,
 ): address {
     let br_address = battle_royale::get_address(battle_royale);
@@ -970,6 +1020,7 @@ public entry fun create_coin_for_br<T>(
         website,
         image_url,
         coin_type,
+        coin_metadata_id,
         option::some(br_address),
         ctx,
     );
@@ -988,8 +1039,15 @@ public entry fun buy_tokens_with_br<T>(
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
+    assert!(!coin_info.graduation_locked, E_TRADING_LOCKED);
     let current_epoch = tx_context::epoch_timestamp_ms(ctx);
     let coin_address = object::uid_to_address(&coin_info.id);
+
+    // Check if this trade triggers graduation and lock if so
+    let will_trigger_graduation = would_trigger_graduation(launchpad, coin_info, sui_amount);
+    if (will_trigger_graduation) {
+        coin_info.graduation_locked = true;
+    };
 
     // Validate battle royale eligibility
     assert!(
@@ -1042,6 +1100,7 @@ public entry fun buy_tokens_with_br<T>(
     coin_info.supply = coin_info.supply + tokens_to_mint;
 
     // Emit trade event
+    let is_eligible_for_graduation = check_graduation_eligibility(launchpad, coin_info);
     let new_price = get_current_price(coin_info);
     event::emit(TradeEvent {
         is_buy: true,
@@ -1061,6 +1120,7 @@ public entry fun buy_tokens_with_br<T>(
         cetus_pool_sui_liquidity: option::none(),
         cetus_pool_token_liquidity: option::none(),
         is_graduated_trade: false,
+        is_eligible_for_graduation: option::some(is_eligible_for_graduation),
     });
 }
 
@@ -1073,6 +1133,7 @@ public entry fun sell_tokens_with_br<T>(
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
+    assert!(!coin_info.graduation_locked, E_TRADING_LOCKED);
     let current_epoch = tx_context::epoch_timestamp_ms(ctx);
     let coin_address = object::uid_to_address(&coin_info.id);
     let token_amount = coin::value(&tokens);
@@ -1142,5 +1203,6 @@ public entry fun sell_tokens_with_br<T>(
         cetus_pool_sui_liquidity: option::none(),
         cetus_pool_token_liquidity: option::none(),
         is_graduated_trade: false,
+        is_eligible_for_graduation: option::none(),
     });
 }
