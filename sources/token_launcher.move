@@ -8,7 +8,7 @@ use sui::sui::SUI;
 // Constants
 const PLATFORM_FEE_BPS: u64 = 100; // 1%
 const CREATION_FEE: u64 = 10_000_000; // 0.01 SUI
-const GRADUATION_FEE: u64 = 300_000_000_000; // 300 SUI
+const GRADUATION_FEE: u64 = 100_000_000; // 0.1 SUI
 const CURRENT_VERSION: u64 = 1;
 const GRADUATION_THRESHOLD: u64 = 4_000_000_000; // 4 SUI
 

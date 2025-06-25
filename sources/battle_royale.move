@@ -195,7 +195,7 @@ public entry fun register_participant(
     );
 
     // Ensure BR hasn't ended
-    let current_time = tx_context::epoch_timestamp_ms(ctx);
+    let current_time = ctx.epoch_timestamp_ms();
     assert!(current_time <= br.end_time, E_BR_NOT_OPEN);
 
     if (current_time > br.start_time) {
@@ -242,7 +242,7 @@ public entry fun register_participant(
 // Function to register a coin in a BR and update registry
 public fun register_coin(br: &mut BattleRoyale, coin_address: address, ctx: &mut TxContext) {
     let br_address = object::uid_to_address(&br.id);
-    let current_time = tx_context::epoch_timestamp_ms(ctx);
+    let current_time = ctx.epoch_timestamp_ms();
 
     // Ensure BR is not finalized or cancelled
     assert!(!br.is_finalized && !br.is_cancelled, E_BR_NOT_OPEN);
@@ -395,6 +395,8 @@ public entry fun update_battle_royale(
     platform_fee_bps: u64,
     ctx: &mut TxContext,
 ) {
+    let current_time = ctx.epoch_timestamp_ms();
+
     // Ensure only admin can update a BR
     assert!(tx_context::sender(ctx) == br.admin, E_NOT_ADMIN);
 
@@ -406,7 +408,7 @@ public entry fun update_battle_royale(
 
     // Ensure BR is not finalized or cancelled
     assert!(!br.is_finalized && !br.is_cancelled, E_BR_NOT_OPEN);
-    assert!(tx_context::epoch_timestamp_ms(ctx) < br.end_time, E_BR_NOT_OPEN);
+    assert!(current_time < br.end_time, E_BR_NOT_OPEN);
 
     let old_max_coins_per_participant = br.max_coins_per_participant;
     let old_mid_battle_registration_enabled = br.mid_battle_registration_enabled;
@@ -482,7 +484,7 @@ public fun contribute_trade_fee(
     fee_balance: Balance<SUI>,
     ctx: &mut TxContext,
 ) {
-    let current_time = tx_context::epoch_timestamp_ms(ctx);
+    let current_time = ctx.epoch_timestamp_ms();
     if (!is_battle_royale_active(br, current_time)) {
         // transfer fee to treasury
         token_launcher::add_to_treasury(launchpad, fee_balance);
@@ -517,7 +519,7 @@ public entry fun finalize_battle_royale(
     assert!(tx_context::sender(ctx) == br.admin, E_NOT_ADMIN);
 
     // Ensure BR has ended
-    let current_time = tx_context::epoch_timestamp_ms(ctx);
+    let current_time = ctx.epoch_timestamp_ms();
     assert!(current_time > br.end_time, E_BR_NOT_ENDED);
 
     // Ensure BR is not already finalized

@@ -239,6 +239,8 @@ public fun create_coin_internal<T>(
     br_address: Option<address>,
     ctx: &mut TxContext,
 ): address {
+    let current_time = ctx.epoch_timestamp_ms();
+
     // Validate inputs
     assert!(validate_inputs(name, symbol), E_INVALID_NAME_LENGTH);
 
@@ -276,7 +278,7 @@ public fun create_coin_internal<T>(
         description,
         image_url: url::new_unsafe_from_bytes(*as_bytes(&image_url)),
         creator: tx_context::sender(ctx),
-        launch_time: tx_context::epoch_timestamp_ms(ctx),
+        launch_time: current_time,
         coin_type,
         coin_metadata_id,
         token_decimals,
@@ -309,7 +311,7 @@ public fun create_coin_internal<T>(
         website,
         creator: tx_context::sender(ctx),
         coin_address,
-        launch_time: tx_context::epoch_timestamp_ms(ctx),
+        launch_time: current_time,
         virtual_sui_reserves: coin_info.virtual_sui_reserves,
         virtual_token_reserves: coin_info.virtual_token_reserves,
         real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
@@ -1040,7 +1042,7 @@ public entry fun buy_tokens_with_br<T>(
     ctx: &mut TxContext,
 ) {
     assert!(!coin_info.graduation_locked, E_TRADING_LOCKED);
-    let current_epoch = tx_context::epoch_timestamp_ms(ctx);
+    let current_epoch = ctx.epoch_timestamp_ms();
     let coin_address = object::uid_to_address(&coin_info.id);
 
     // Check if this trade triggers graduation and lock if so
@@ -1134,7 +1136,7 @@ public entry fun sell_tokens_with_br<T>(
     ctx: &mut TxContext,
 ) {
     assert!(!coin_info.graduation_locked, E_TRADING_LOCKED);
-    let current_epoch = tx_context::epoch_timestamp_ms(ctx);
+    let current_epoch = ctx.epoch_timestamp_ms();
     let coin_address = object::uid_to_address(&coin_info.id);
     let token_amount = coin::value(&tokens);
 
