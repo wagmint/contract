@@ -1032,7 +1032,7 @@ public entry fun create_coin_for_br<T>(
         ctx,
     );
 
-    battle_royale::register_coin(battle_royale, coin_address, ctx);
+    battle_royale::register_coin(battle_royale, coin_address, clock, ctx);
     coin_address
 }
 
@@ -1091,7 +1091,7 @@ public entry fun buy_tokens_with_br<T>(
     ) {
         let br_fee_payment = balance::split(&mut paid_balance, br_fee);
         fee = fee - br_fee;
-        battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, ctx);
+        battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, clock);
     };
 
     // Process remaining fees and update reserves
@@ -1181,7 +1181,7 @@ public entry fun sell_tokens_with_br<T>(
         battle_royale::is_coin_valid_for_battle_royale(br, coin_address, current_epoch) && br_fee > 0
     ) {
         let br_fee_payment = balance::split(&mut fee_payment, br_fee);
-        battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, ctx);
+        battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, clock);
     };
 
     // Process sale completion
