@@ -90,6 +90,8 @@ public fun execute_graduation<T>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (u64, u64, address) {
+    let current_time = clock.timestamp_ms();
+
     // Validation at the start
     assert!(!graduated, E_ALREADY_GRADUATED);
     assert!(
@@ -195,7 +197,7 @@ public fun execute_graduation<T>(
     // Emit graduation event with correct pool ID
     event::emit(TokenGraduatedEvent {
         coin_address,
-        graduation_time: tx_context::epoch_timestamp_ms(ctx),
+        graduation_time: current_time,
         final_bonding_curve_price: final_bc_price,
         accumulated_sui_amount,
         amm_reserve_tokens_minted,

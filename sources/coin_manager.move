@@ -236,10 +236,11 @@ public fun create_coin_internal<T>(
     image_url: String,
     coin_type: String,
     coin_metadata_id: address,
+    clock: &Clock,
     br_address: Option<address>,
     ctx: &mut TxContext,
 ): address {
-    let current_time = ctx.epoch_timestamp_ms();
+    let current_time = clock.timestamp_ms();
 
     // Validate inputs
     assert!(validate_inputs(name, symbol), E_INVALID_NAME_LENGTH);
@@ -401,6 +402,7 @@ public entry fun create_coin<T>(
     image_url: String,
     coin_type: String,
     coin_metadata_id: address,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): address {
     create_coin_internal(
@@ -415,6 +417,7 @@ public entry fun create_coin<T>(
         image_url,
         coin_type,
         coin_metadata_id,
+        clock,
         option::none(),
         ctx,
     )
@@ -1008,6 +1011,7 @@ public entry fun create_coin_for_br<T>(
     image_url: String,
     coin_type: String,
     coin_metadata_id: address,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): address {
     let br_address = battle_royale::get_address(battle_royale);
@@ -1023,6 +1027,7 @@ public entry fun create_coin_for_br<T>(
         image_url,
         coin_type,
         coin_metadata_id,
+        clock,
         option::some(br_address),
         ctx,
     );
@@ -1038,11 +1043,12 @@ public entry fun buy_tokens_with_br<T>(
     payment: &mut Coin<SUI>,
     sui_amount: u64,
     min_tokens_out: u64,
+    clock: &Clock,
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
     assert!(!coin_info.graduation_locked, E_TRADING_LOCKED);
-    let current_epoch = ctx.epoch_timestamp_ms();
+    let current_epoch = clock.timestamp_ms();
     let coin_address = object::uid_to_address(&coin_info.id);
 
     // Check if this trade triggers graduation and lock if so
@@ -1132,11 +1138,12 @@ public entry fun sell_tokens_with_br<T>(
     coin_info: &mut CoinInfo<T>,
     tokens: Coin<T>,
     min_sui_out: u64,
+    clock: &Clock,
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
     assert!(!coin_info.graduation_locked, E_TRADING_LOCKED);
-    let current_epoch = ctx.epoch_timestamp_ms();
+    let current_epoch = clock.timestamp_ms();
     let coin_address = object::uid_to_address(&coin_info.id);
     let token_amount = coin::value(&tokens);
 
