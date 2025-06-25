@@ -236,9 +236,12 @@ public fun create_coin_internal<T>(
     image_url: String,
     coin_type: String,
     coin_metadata_id: address,
+    clock: &Clock,
     br_address: Option<address>,
     ctx: &mut TxContext,
 ): address {
+    let current_time = clock.timestamp_ms();
+
     // Validate inputs
     assert!(validate_inputs(name, symbol), E_INVALID_NAME_LENGTH);
 
@@ -276,7 +279,7 @@ public fun create_coin_internal<T>(
         description,
         image_url: url::new_unsafe_from_bytes(*as_bytes(&image_url)),
         creator: tx_context::sender(ctx),
-        launch_time: tx_context::epoch_timestamp_ms(ctx),
+        launch_time: current_time,
         coin_type,
         coin_metadata_id,
         token_decimals,
@@ -309,7 +312,7 @@ public fun create_coin_internal<T>(
         website,
         creator: tx_context::sender(ctx),
         coin_address,
-        launch_time: tx_context::epoch_timestamp_ms(ctx),
+        launch_time: current_time,
         virtual_sui_reserves: coin_info.virtual_sui_reserves,
         virtual_token_reserves: coin_info.virtual_token_reserves,
         real_sui_reserves: balance::value(&coin_info.real_sui_reserves),
@@ -399,6 +402,7 @@ public entry fun create_coin<T>(
     image_url: String,
     coin_type: String,
     coin_metadata_id: address,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): address {
     create_coin_internal(
@@ -413,6 +417,7 @@ public entry fun create_coin<T>(
         image_url,
         coin_type,
         coin_metadata_id,
+        clock,
         option::none(),
         ctx,
     )
@@ -1006,6 +1011,7 @@ public entry fun create_coin_for_br<T>(
     image_url: String,
     coin_type: String,
     coin_metadata_id: address,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): address {
     let br_address = battle_royale::get_address(battle_royale);
@@ -1021,11 +1027,12 @@ public entry fun create_coin_for_br<T>(
         image_url,
         coin_type,
         coin_metadata_id,
+        clock,
         option::some(br_address),
         ctx,
     );
 
-    battle_royale::register_coin(battle_royale, coin_address, ctx);
+    battle_royale::register_coin(battle_royale, coin_address, clock, ctx);
     coin_address
 }
 
@@ -1036,11 +1043,12 @@ public entry fun buy_tokens_with_br<T>(
     payment: &mut Coin<SUI>,
     sui_amount: u64,
     min_tokens_out: u64,
+    clock: &Clock,
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
     assert!(!coin_info.graduation_locked, E_TRADING_LOCKED);
-    let current_epoch = tx_context::epoch_timestamp_ms(ctx);
+    let current_epoch = clock.timestamp_ms();
     let coin_address = object::uid_to_address(&coin_info.id);
 
     // Check if this trade triggers graduation and lock if so
@@ -1083,7 +1091,7 @@ public entry fun buy_tokens_with_br<T>(
     ) {
         let br_fee_payment = balance::split(&mut paid_balance, br_fee);
         fee = fee - br_fee;
-        battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, ctx);
+        battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, clock);
     };
 
     // Process remaining fees and update reserves
@@ -1130,11 +1138,12 @@ public entry fun sell_tokens_with_br<T>(
     coin_info: &mut CoinInfo<T>,
     tokens: Coin<T>,
     min_sui_out: u64,
+    clock: &Clock,
     br: &mut BattleRoyale,
     ctx: &mut TxContext,
 ) {
     assert!(!coin_info.graduation_locked, E_TRADING_LOCKED);
-    let current_epoch = tx_context::epoch_timestamp_ms(ctx);
+    let current_epoch = clock.timestamp_ms();
     let coin_address = object::uid_to_address(&coin_info.id);
     let token_amount = coin::value(&tokens);
 
@@ -1172,7 +1181,7 @@ public entry fun sell_tokens_with_br<T>(
         battle_royale::is_coin_valid_for_battle_royale(br, coin_address, current_epoch) && br_fee > 0
     ) {
         let br_fee_payment = balance::split(&mut fee_payment, br_fee);
-        battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, ctx);
+        battle_royale::contribute_trade_fee(launchpad, br, coin_address, br_fee_payment, clock);
     };
 
     // Process sale completion
