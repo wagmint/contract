@@ -1040,7 +1040,7 @@ public entry fun create_coin_for_br<T>(
 public entry fun buy_tokens_with_br<T>(
     launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
-    payment: &mut Coin<SUI>,
+    mut payment: Coin<SUI>, // ← Changed from &mut Coin<SUI> to Coin<SUI>
     sui_amount: u64,
     min_tokens_out: u64,
     clock: &Clock,
@@ -1075,12 +1075,18 @@ public entry fun buy_tokens_with_br<T>(
     // Calculate fees (platform + battle royale)
     let platform_fee = token_launcher::get_platform_fee(launchpad);
     let mut fee = calculate_transaction_fee(sui_amount, platform_fee);
+    let payment_amount = coin::value(&payment);
     let total_cost = sui_amount + fee;
-    assert!(coin::value(payment) >= total_cost, E_INSUFFICIENT_PAYMENT);
+    assert!(payment_amount >= total_cost, E_INSUFFICIENT_PAYMENT);
 
-    // Process payment and split fees
-    let paid = coin::split(payment, total_cost, ctx);
-    let mut paid_balance = coin::into_balance(paid);
+    // Handle remainder BEFORE processing (like buy_tokens does)
+    if (payment_amount > total_cost) {
+        let remainder = coin::split(&mut payment, payment_amount - total_cost, ctx);
+        transfer::public_transfer(remainder, tx_context::sender(ctx));
+    };
+
+    // Convert entire remaining payment to balance and split fees
+    let mut paid_balance = coin::into_balance(payment);
 
     // Calculate and handle battle royale fee
     let br_fee_bps = battle_royale::get_br_fee_bps(br);
