@@ -1040,7 +1040,7 @@ public entry fun create_coin_for_br<T>(
 public entry fun buy_tokens_with_br<T>(
     launchpad: &mut token_launcher::Launchpad,
     coin_info: &mut CoinInfo<T>,
-    mut payment: Coin<SUI>, // ← Changed from &mut Coin<SUI> to Coin<SUI>
+    mut payment: Coin<SUI>,
     sui_amount: u64,
     min_tokens_out: u64,
     clock: &Clock,
