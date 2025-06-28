@@ -20,11 +20,12 @@ const E_NOT_ELIGIBLE_FOR_GRADUATION: u64 = 1;
 public struct TokenGraduatedEvent has copy, drop {
     coin_address: address,
     graduation_time: u64,
-    final_bonding_curve_price: u64,
-    accumulated_sui_amount: u64,
-    amm_reserve_tokens_minted: u64,
+    new_price: u64,
+    cetus_pool_sui_liquidity: u64,
+    cetus_pool_token_liquidity: u64,
     total_supply_in_circulation: u64,
-    amm_pool_id: Option<address>,
+    amm_pool_id: address,
+    market_cap: u64,
 }
 
 public struct CetusPoolCreatedEvent has copy, drop {
@@ -163,7 +164,12 @@ public fun execute_graduation<T>(
     let actual_pool_id = factory::pool_id(pool_info);
     let pool_address = object::id_to_address(&actual_pool_id);
 
-    // Emit Cetus pool creation event with correct pool ID
+    // Calculate market cap using final bonding curve price
+    let market_cap = utils::as_u64(
+        utils::mul(utils::from_u64(final_bc_price), utils::from_u64(total_supply_in_circulation)),
+    );
+
+    // Emit Cetus pool creation event with correct pool ID and market metrics
     event::emit(CetusPoolCreatedEvent {
         pool_id: pool_address,
         position_id: object::id_to_address(&object::id(&position)),
@@ -198,11 +204,12 @@ public fun execute_graduation<T>(
     event::emit(TokenGraduatedEvent {
         coin_address,
         graduation_time: current_time,
-        final_bonding_curve_price: final_bc_price,
-        accumulated_sui_amount,
-        amm_reserve_tokens_minted,
+        new_price: final_bc_price,
+        cetus_pool_sui_liquidity: accumulated_sui_amount,
+        cetus_pool_token_liquidity: amm_reserve_tokens_minted,
         total_supply_in_circulation,
-        amm_pool_id: option::some(pool_address), // Use actual pool address
+        amm_pool_id: pool_address, // Use actual pool address
+        market_cap,
     });
 
     (accumulated_sui_amount, amm_reserve_tokens_minted, pool_address)
